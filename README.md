@@ -1,4 +1,4 @@
-# AgentBus
+# stream0
 
 HTTP-native event streaming for AI agents. Built in Go for performance and single-binary deployment.
 
@@ -62,15 +62,15 @@ python3 test_go.py
 ## Configuration
 
 Environment variables:
-- `AGENTBUS_HOST` - Bind address (default: 127.0.0.1)
-- `AGENTBUS_PORT` - Port (default: 8080)
-- `AGENTBUS_DB` - Database path (default: ./agentbus.db)
+- `STREAM0_HOST` - Bind address (default: 127.0.0.1)
+- `STREAM0_PORT` - Port (default: 8080)
+- `STREAM0_DB` - Database path (default: ./agentbus.db)
 
 ## Architecture
 
 ```
 ┌──────────┐     ┌──────────┐     ┌──────────┐
-│ Agent A  │────→│ AgentBus │────→│ Agent B  │
+│ Agent A  │────→│ stream0 │────→│ Agent B  │
 │ Producer │     │   (Go)   │     │ Consumer │
 └──────────┘     └────┬─────┘     └──────────┘
                       │

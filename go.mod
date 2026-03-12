@@ -1,4 +1,4 @@
-module github.com/risingwavelabs/agentbus
+module github.com/risingwavelabs/stream0
 
 go 1.25.1
 
