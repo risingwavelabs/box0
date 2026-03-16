@@ -569,7 +569,7 @@ func TestMultipleConcurrentRequests(t *testing.T) {
 	}
 }
 
-// --- v2 Inbox Model Endpoint Tests ---
+// --- Inbox Endpoint Tests ---
 
 func TestRegisterAgentEndpoint(t *testing.T) {
 	s := setupTestServer(t)

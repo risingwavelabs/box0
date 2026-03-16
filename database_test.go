@@ -397,7 +397,7 @@ func TestTopicMessageCount(t *testing.T) {
 	}
 }
 
-// --- v2 Inbox Model Database Tests ---
+// --- Inbox Database Tests ---
 
 func TestRegisterAgent(t *testing.T) {
 	db := setupTestDB(t)

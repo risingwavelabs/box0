@@ -84,14 +84,14 @@ from stream0 import Stream0Client
 
 client = Stream0Client("http://localhost:8080", api_key="optional-key")
 
-# v2 inbox API
+# Inbox API
 client.register_agent("my-agent")
 client.send("target-agent", "task-1", "my-agent", "request", {"data": "hello"})
 messages = client.receive("my-agent", status="unread")
 client.ack_inbox(messages[0]["id"])
 history = client.get_task_messages("task-1")
 
-# v1 topic API (still available)
+# Legacy topic API
 client.create_topic("events")
 client.publish("events", {"action": "click"})
 messages = client.consume("events", "group1", timeout=5)

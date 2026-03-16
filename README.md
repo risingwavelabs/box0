@@ -106,7 +106,7 @@ Returns all 4 messages in chronological order — the complete audit trail.
 
 ## API Reference
 
-### Inbox Model (v2)
+### Inbox API
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -149,9 +149,9 @@ GET /agents/{agent_id}/inbox?status=unread&task_id=task-123&timeout=10
 | `done` | Task completed successfully |
 | `failed` | Task failed |
 
-### Topic Model (v1)
+### Legacy Topic API
 
-The original topic-based pub/sub API is still available for broadcast and fan-out use cases. See [docs/v1-api.md](docs/v1-api.md) for details.
+The original topic-based pub/sub API is still available for broadcast and fan-out use cases.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -278,7 +278,7 @@ Every message carries the same `task_id`. The main agent always knows which conv
 
 ## Design Principles
 
-- **Inbox model, not topic model.** Every agent has its own inbox. Messages are point-to-point.
+- **Every agent has its own inbox.** Messages are point-to-point.
 - **HTTP-native.** No SDK required. curl works. Any language, any framework.
 - **task_id is the conversation.** Like an email subject line — groups related messages.
 - **Polling is fine.** Agents think for 30+ seconds. A few seconds of message latency is irrelevant.

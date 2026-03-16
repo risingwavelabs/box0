@@ -61,7 +61,7 @@ type ReplyRequest struct {
 	Group   string                 `json:"group"` // optional, ack original message
 }
 
-// --- v2 Inbox Model Request/Response types ---
+// --- Inbox Request/Response types ---
 
 // RegisterAgentRequest represents a request to register an agent
 type RegisterAgentRequest struct {
@@ -134,7 +134,7 @@ func (s *Server) setupRoutes(authCfg AuthConfig) {
 	api.POST("/messages/:message_id/reply", s.replyHandler)
 	api.GET("/topics/:topic/subscribe", s.websocketHandler)
 
-	// v2 Inbox Model routes
+	// Inbox routes
 	api.POST("/agents", s.registerAgentHandler)
 	api.DELETE("/agents/:agent_id", s.deleteAgentHandler)
 	api.POST("/agents/:agent_id/inbox", s.sendInboxMessageHandler)
@@ -596,7 +596,7 @@ func (s *Server) websocketHandler(c *gin.Context) {
 	}
 }
 
-// --- v2 Inbox Model Handlers ---
+// --- Inbox Handlers ---
 
 func (s *Server) registerAgentHandler(c *gin.Context) {
 	var req RegisterAgentRequest

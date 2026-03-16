@@ -10,7 +10,7 @@ An agent communication layer. Every agent gets an inbox. Agents send messages to
 
 ```
 ├── main.go           # Entry point, graceful shutdown
-├── server.go         # HTTP handlers (v1 topic + v2 inbox)
+├── server.go         # HTTP handlers (inbox + topic)
 ├── database.go       # SQLite operations, schema
 ├── config.go         # YAML config + env var loading
 ├── server_test.go    # HTTP endpoint tests
@@ -44,7 +44,7 @@ STREAM0_URL=http://localhost:8080 pytest tests/test_integration.py -v
 
 ## Key APIs
 
-### v2 Inbox Model (primary)
+### Inbox API
 
 - `POST /agents` — register agent `{"id": "agent-name"}`
 - `POST /agents/{id}/inbox` — send message `{"task_id", "from", "type", "content"}`
@@ -54,7 +54,7 @@ STREAM0_URL=http://localhost:8080 pytest tests/test_integration.py -v
 
 Message types: `request`, `question`, `answer`, `done`, `failed`
 
-### v1 Topic Model (still works, backward compatible)
+### Legacy Topic API
 
 - `POST /topics` — create topic
 - `POST /topics/{name}/messages` — publish
@@ -67,7 +67,7 @@ Message types: `request`, `question`, `answer`, `done`, `failed`
 - **Config loading**: No envconfig library. Manual `os.Getenv()` only overrides when set. See config.go.
 - **Auth**: API key via `X-API-Key` header. Keys in YAML config under `auth.api_keys`. Constant-time comparison.
 - **CGO required**: `mattn/go-sqlite3` requires CGO. Cannot cross-compile from macOS to Linux. Build on the target machine.
-- **Long-polling**: Both v1 consume and v2 inbox support long-polling with `timeout` param.
+- **Long-polling**: Both topic consume and inbox endpoints support long-polling with `timeout` param.
 
 ## Deployment
 
@@ -81,7 +81,7 @@ Message types: `request`, `question`, `answer`, `done`, `failed`
 ### Add a new inbox endpoint
 
 1. Add handler in `server.go` (pattern: `func (s *Server) myHandler(c *gin.Context)`)
-2. Register route in `setupRoutes()` under the v2 section
+2. Register route in `setupRoutes()` under the inbox section
 3. Add database method in `database.go` if needed
 4. Add tests in both `server_test.go` and `database_test.go`
 5. Update Python SDK in `sdk/python/stream0/client.py`

@@ -30,13 +30,13 @@ type Topic struct {
 	MessageCount  int       `json:"message_count"`
 }
 
-// Agent represents a registered agent (v2 inbox model)
+// Agent represents a registered agent
 type Agent struct {
 	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// InboxMessage represents a message in an agent's inbox (v2)
+// InboxMessage represents a message in an agent's inbox
 type InboxMessage struct {
 	ID        string                 `json:"id"`
 	TaskID    string                 `json:"task_id"`
@@ -458,7 +458,7 @@ func (d *Database) DeleteReply(correlationID string) error {
 	return err
 }
 
-// --- v2 Inbox Model Methods ---
+// --- Inbox Methods ---
 
 // RegisterAgent registers a new agent
 func (d *Database) RegisterAgent(id string) (*Agent, error) {
