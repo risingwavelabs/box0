@@ -429,24 +429,24 @@ def test_delete_agent_integration(client):
 
 
 def test_send_and_receive(main_agent, worker_agent):
-    task_id = unique_name("task")
+    thread_id = unique_name("task")
 
     # Main sends to worker
-    main_agent.send(worker_agent.agent_id, task_id=task_id, msg_type="request",
+    main_agent.send(worker_agent.agent_id, thread_id=thread_id, msg_type="request",
                     content={"instruction": "process this"})
 
     # Worker receives
-    messages = worker_agent.receive(task_id=task_id)
+    messages = worker_agent.receive(thread_id=thread_id)
     assert len(messages) == 1
-    assert messages[0]["task_id"] == task_id
+    assert messages[0]["thread_id"] == thread_id
     assert messages[0]["type"] == "request"
     assert messages[0]["content"]["instruction"] == "process this"
 
 
 def test_ack_marks_as_read(main_agent, worker_agent):
-    task_id = unique_name("task")
+    thread_id = unique_name("task")
 
-    main_agent.send(worker_agent.agent_id, task_id=task_id, msg_type="request")
+    main_agent.send(worker_agent.agent_id, thread_id=thread_id, msg_type="request")
 
     # Get the message
     messages = worker_agent.receive()
@@ -461,12 +461,12 @@ def test_ack_marks_as_read(main_agent, worker_agent):
 
 
 def test_inbox_long_polling(main_agent, worker_agent):
-    task_id = unique_name("task")
+    thread_id = unique_name("task")
 
     result_holder = {}
 
     def poller():
-        messages = worker_agent.receive(task_id=task_id, timeout=10)
+        messages = worker_agent.receive(thread_id=thread_id, timeout=10)
         result_holder["messages"] = messages
 
     # Start long-polling
@@ -475,7 +475,7 @@ def test_inbox_long_polling(main_agent, worker_agent):
 
     # Wait a bit, then send
     time.sleep(1)
-    main_agent.send(worker_agent.agent_id, task_id=task_id, msg_type="request",
+    main_agent.send(worker_agent.agent_id, thread_id=thread_id, msg_type="request",
                     content={"data": "arrived via long-poll"})
 
     t.join(timeout=15)
@@ -486,81 +486,81 @@ def test_inbox_long_polling(main_agent, worker_agent):
 
 
 def test_task_history(main_agent, worker_agent):
-    task_id = unique_name("task")
+    thread_id = unique_name("task")
 
     # Send request
-    main_agent.send(worker_agent.agent_id, task_id=task_id, msg_type="request",
+    main_agent.send(worker_agent.agent_id, thread_id=thread_id, msg_type="request",
                     content={"instruction": "translate"})
 
     # Worker asks question
-    worker_agent.send(main_agent.agent_id, task_id=task_id, msg_type="question",
+    worker_agent.send(main_agent.agent_id, thread_id=thread_id, msg_type="question",
                       content={"q": "A or B?"})
 
     # Main answers
-    main_agent.send(worker_agent.agent_id, task_id=task_id, msg_type="answer",
+    main_agent.send(worker_agent.agent_id, thread_id=thread_id, msg_type="answer",
                     content={"a": "use A"})
 
     # Worker completes
-    worker_agent.send(main_agent.agent_id, task_id=task_id, msg_type="done",
+    worker_agent.send(main_agent.agent_id, thread_id=thread_id, msg_type="done",
                       content={"result": "translated document"})
 
     # Get full history
-    history = main_agent.history(task_id)
+    history = main_agent.history(thread_id)
     assert len(history) == 4
     assert [m["type"] for m in history] == ["request", "question", "answer", "done"]
 
 
 def test_multi_turn_translation_scenario(main_agent, worker_agent):
     """Full translation scenario from the PRD."""
-    task_id = unique_name("translate")
+    thread_id = unique_name("translate")
 
     # Step 1: Main agent sends translation task
-    main_agent.send(worker_agent.agent_id, task_id=task_id, msg_type="request",
+    main_agent.send(worker_agent.agent_id, thread_id=thread_id, msg_type="request",
                     content={
                         "instruction": "Translate this legal contract to Japanese",
                         "document": "The party of the first part hereby...",
                     })
 
     # Step 2: Worker picks up the task
-    messages = worker_agent.receive(task_id=task_id)
+    messages = worker_agent.receive(thread_id=thread_id)
     assert len(messages) == 1
     assert messages[0]["type"] == "request"
     worker_agent.ack(messages[0]["id"])
 
     # Step 3: Worker finds ambiguity, asks a question
-    worker_agent.send(main_agent.agent_id, task_id=task_id, msg_type="question",
+    worker_agent.send(main_agent.agent_id, thread_id=thread_id, msg_type="question",
                       content={
                           "question": "Clause 3 uses 'indemnification' - use 損害賠償 or 補償?",
                       })
 
     # Step 4: Main agent receives the question
-    questions = main_agent.receive(task_id=task_id)
+    questions = main_agent.receive(thread_id=thread_id)
     assert len(questions) == 1
     assert questions[0]["type"] == "question"
     main_agent.ack(questions[0]["id"])
 
     # Step 5: Main agent answers
-    main_agent.send(worker_agent.agent_id, task_id=task_id, msg_type="answer",
+    main_agent.send(worker_agent.agent_id, thread_id=thread_id, msg_type="answer",
                     content={"answer": "Use 補償 (compensation)"})
 
     # Step 6: Worker receives answer, continues, completes
-    answers = worker_agent.receive(task_id=task_id)
+    answers = worker_agent.receive(thread_id=thread_id)
     assert len(answers) == 1
     assert answers[0]["type"] == "answer"
     worker_agent.ack(answers[0]["id"])
 
     # Step 7: Worker sends completed result
-    worker_agent.send(main_agent.agent_id, task_id=task_id, msg_type="done",
+    worker_agent.send(main_agent.agent_id, thread_id=thread_id, msg_type="done",
                       content={"translated_document": "第一当事者は、ここに..."})
 
     # Step 8: Main agent receives the result
-    results = main_agent.receive(task_id=task_id)
+    results = main_agent.receive(thread_id=thread_id)
     assert len(results) == 1
     assert results[0]["type"] == "done"
     assert "第一当事者" in results[0]["content"]["translated_document"]
 
     # Verify full conversation history
-    history = main_agent.history(task_id)
+    history = main_agent.history(thread_id)
     assert len(history) == 4
 
     expected_flow = [
@@ -582,7 +582,7 @@ def test_multiple_sub_agents(client):
     research_id = unique_name("research")
     writer_id = unique_name("writer")
     charts_id = unique_name("charts")
-    task_id = unique_name("report")
+    thread_id = unique_name("report")
 
     # Register all agents
     for agent_id in [main_id, research_id, writer_id, charts_id]:
@@ -594,7 +594,7 @@ def test_multiple_sub_agents(client):
         (writer_id, "write executive summary"),
         (charts_id, "create visualizations"),
     ]:
-        client.send(sub_id, task_id, main_id, "request", {"instruction": instruction})
+        client.send(sub_id, thread_id, main_id, "request", {"instruction": instruction})
 
     # Each sub-agent completes
     for sub_id, result in [
@@ -602,15 +602,15 @@ def test_multiple_sub_agents(client):
         (writer_id, {"summary": "Report written"}),
         (charts_id, {"chart": "chart.png"}),
     ]:
-        client.send(main_id, task_id, sub_id, "done", result)
+        client.send(main_id, thread_id, sub_id, "done", result)
 
     # Main sees all 3 completions
-    messages = client.receive(main_id, task_id=task_id)
+    messages = client.receive(main_id, thread_id=thread_id)
     assert len(messages) == 3
     assert all(m["type"] == "done" for m in messages)
 
     # Full task history: 3 requests + 3 completions = 6
-    history = client.get_task_messages(task_id)
+    history = client.get_thread_messages(thread_id)
     assert len(history) == 6
 
 
@@ -735,27 +735,27 @@ def test_webhook_called_on_message(client):
     assert len(received) == 1
     assert received[0]["event"] == "new_message"
     assert received[0]["agent_id"] == agent_id
-    assert received[0]["task_id"] == "task-wh"
+    assert received[0]["thread_id"] == "task-wh"
     assert received[0]["from"] == sender_id
     assert received[0]["type"] == "request"
 
 
 def test_failed_task(main_agent, worker_agent):
     """Worker reports task failure."""
-    task_id = unique_name("task")
+    thread_id = unique_name("task")
 
-    main_agent.send(worker_agent.agent_id, task_id=task_id, msg_type="request",
+    main_agent.send(worker_agent.agent_id, thread_id=thread_id, msg_type="request",
                     content={"instruction": "do something impossible"})
 
-    messages = worker_agent.receive(task_id=task_id)
+    messages = worker_agent.receive(thread_id=thread_id)
     worker_agent.ack(messages[0]["id"])
 
     # Worker fails
-    worker_agent.send(main_agent.agent_id, task_id=task_id, msg_type="failed",
+    worker_agent.send(main_agent.agent_id, thread_id=thread_id, msg_type="failed",
                       content={"error": "task is impossible", "code": "IMPOSSIBLE"})
 
     # Main sees the failure
-    results = main_agent.receive(task_id=task_id)
+    results = main_agent.receive(thread_id=thread_id)
     assert len(results) == 1
     assert results[0]["type"] == "failed"
     assert results[0]["content"]["error"] == "task is impossible"

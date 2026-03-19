@@ -9,7 +9,7 @@ Stream0 gives every agent an inbox. Agents send messages to each other's inboxes
 Think of it like email for agents:
 - Every agent has an **inbox**
 - Messages are **point-to-point** (Agent A → Agent B)
-- Every message carries a **task_id** (like an email subject line — groups a conversation)
+- Every message carries a **thread_id** (like an email subject line — groups a conversation)
 - Agents can go **back and forth** (request → question → answer → done)
 - Messages **persist** — if an agent is offline, messages wait in the inbox
 
@@ -58,7 +58,7 @@ That's it. `my-agent` now has an inbox.
 curl -X POST http://localhost:8080/agents/my-agent/inbox \
   -H "Content-Type: application/json" \
   -d '{
-    "task_id": "task-1",
+    "thread_id": "task-1",
     "from": "another-agent",
     "type": "request",
     "content": {"instruction": "summarize this document"}
@@ -76,7 +76,7 @@ curl "http://localhost:8080/agents/my-agent/inbox?status=unread"
   "messages": [
     {
       "id": "imsg-abc123",
-      "task_id": "task-1",
+      "thread_id": "task-1",
       "from": "another-agent",
       "to": "my-agent",
       "type": "request",
@@ -117,7 +117,7 @@ curl -X POST http://localhost:8080/agents -H "Content-Type: application/json" \
 curl -X POST http://localhost:8080/agents/code-reviewer/inbox \
   -H "Content-Type: application/json" \
   -d '{
-    "task_id": "review-pr-42",
+    "thread_id": "review-pr-42",
     "from": "orchestrator",
     "type": "request",
     "content": {
@@ -132,13 +132,13 @@ curl -X POST http://localhost:8080/agents/code-reviewer/inbox \
 
 ```bash
 # Reviewer polls inbox
-curl "http://localhost:8080/agents/code-reviewer/inbox?status=unread&task_id=review-pr-42"
+curl "http://localhost:8080/agents/code-reviewer/inbox?status=unread&thread_id=review-pr-42"
 
 # Reviewer asks a clarifying question
 curl -X POST http://localhost:8080/agents/orchestrator/inbox \
   -H "Content-Type: application/json" \
   -d '{
-    "task_id": "review-pr-42",
+    "thread_id": "review-pr-42",
     "from": "code-reviewer",
     "type": "question",
     "content": {
@@ -155,7 +155,7 @@ curl -X POST http://localhost:8080/agents/orchestrator/inbox \
 curl -X POST http://localhost:8080/agents/code-reviewer/inbox \
   -H "Content-Type: application/json" \
   -d '{
-    "task_id": "review-pr-42",
+    "thread_id": "review-pr-42",
     "from": "orchestrator",
     "type": "answer",
     "content": {"answer": "Intentional — it is a test override. Safe to approve."}
@@ -168,7 +168,7 @@ curl -X POST http://localhost:8080/agents/code-reviewer/inbox \
 curl -X POST http://localhost:8080/agents/orchestrator/inbox \
   -H "Content-Type: application/json" \
   -d '{
-    "task_id": "review-pr-42",
+    "thread_id": "review-pr-42",
     "from": "code-reviewer",
     "type": "done",
     "content": {
@@ -182,7 +182,7 @@ curl -X POST http://localhost:8080/agents/orchestrator/inbox \
 **Step 5 — View the full conversation:**
 
 ```bash
-curl "http://localhost:8080/tasks/review-pr-42/messages"
+curl "http://localhost:8080/threads/review-pr-42/messages"
 ```
 
 Returns all 4 messages in order: `request → question → answer → done`. This is the complete audit trail — you can see exactly what the reviewer asked, what they were told, and what they decided.
@@ -229,16 +229,16 @@ requests.post(f"{SERVER}/agents", json={"id": "main"})
 requests.post(f"{SERVER}/agents", json={"id": "researcher"})
 requests.post(f"{SERVER}/agents", json={"id": "writer"})
 
-task_id = f"report-{uuid.uuid4().hex[:8]}"
+thread_id = f"report-{uuid.uuid4().hex[:8]}"
 
 # Dispatch work to sub-agents
 requests.post(f"{SERVER}/agents/researcher/inbox", json={
-    "task_id": task_id, "from": "main", "type": "request",
+    "thread_id": thread_id, "from": "main", "type": "request",
     "content": {"instruction": "find market data for AI agents"}
 })
 
 requests.post(f"{SERVER}/agents/writer/inbox", json={
-    "task_id": task_id, "from": "main", "type": "request",
+    "thread_id": thread_id, "from": "main", "type": "request",
     "content": {"instruction": "write an executive summary (wait for research data)"}
 })
 
@@ -246,7 +246,7 @@ requests.post(f"{SERVER}/agents/writer/inbox", json={
 import time
 completed = 0
 while completed < 2:
-    resp = requests.get(f"{SERVER}/agents/main/inbox?status=unread&task_id={task_id}&timeout=30")
+    resp = requests.get(f"{SERVER}/agents/main/inbox?status=unread&thread_id={thread_id}&timeout=30")
     for msg in resp.json()["messages"]:
         print(f"{msg['from']} finished: {msg['type']}")
         requests.post(f"{SERVER}/inbox/messages/{msg['id']}/ack")
@@ -264,7 +264,7 @@ def process_task(task):
     if something_is_unclear:
         # Ask the sender for clarification
         requests.post(f"{SERVER}/agents/{task['from']}/inbox", json={
-            "task_id": task["task_id"],
+            "thread_id": task["thread_id"],
             "from": MY_AGENT_ID,
             "type": "question",
             "content": {"question": "Should I use approach A or B?"}
@@ -273,7 +273,7 @@ def process_task(task):
         # Wait for the answer
         while True:
             resp = requests.get(
-                f"{SERVER}/agents/{MY_AGENT_ID}/inbox?status=unread&task_id={task['task_id']}&timeout=15"
+                f"{SERVER}/agents/{MY_AGENT_ID}/inbox?status=unread&thread_id={task['thread_id']}&timeout=15"
             )
             answers = [m for m in resp.json()["messages"] if m["type"] == "answer"]
             if answers:
@@ -299,10 +299,10 @@ agent = Agent("my-agent", url="http://localhost:8080", api_key="optional-key")
 agent.register()
 
 # Send
-agent.send("other-agent", task_id="t1", msg_type="request", content={"text": "..."})
+agent.send("other-agent", thread_id="t1", msg_type="request", content={"text": "..."})
 
 # Receive
-messages = agent.receive(task_id="t1")
+messages = agent.receive(thread_id="t1")
 agent.ack(messages[0]["id"])
 
 # History
@@ -359,7 +359,7 @@ When a message lands in that agent's inbox, Stream0 POSTs a notification to the 
   "event": "new_message",
   "agent_id": "my-agent",
   "message_id": "imsg-abc123",
-  "task_id": "task-1",
+  "thread_id": "task-1",
   "from": "other-agent",
   "type": "request"
 }
@@ -420,9 +420,9 @@ Each team's agents and messages are completely invisible to the other. Both team
 | `GET` | `/agents` | List all agents (includes `aliases` and `last_seen`) |
 | `DELETE` | `/agents/{id}` | Delete an agent |
 | `POST` | `/agents/{id}/inbox` | Send a message |
-| `GET` | `/agents/{id}/inbox` | Read inbox (`?status=unread&task_id=X&timeout=10`) |
+| `GET` | `/agents/{id}/inbox` | Read inbox (`?status=unread&thread_id=X&timeout=10`) |
 | `POST` | `/inbox/messages/{id}/ack` | Mark a message as read |
-| `GET` | `/tasks/{task_id}/messages` | Full conversation history |
+| `GET` | `/threads/{thread_id}/messages` | Full conversation history |
 | `GET` | `/health` | Health check |
 
 ### Message types
@@ -434,6 +434,7 @@ Each team's agents and messages are completely invisible to the other. Both team
 | `answer` | Reply to a question |
 | `done` | Task completed successfully |
 | `failed` | Task could not be completed |
+| `message` | General-purpose message |
 
 ## For AI agents
 

@@ -20,12 +20,12 @@ agent = Agent("my-agent", url="http://localhost:8080", api_key="optional-key")
 agent.register()
 
 # Send a message to another agent
-agent.send("other-agent", task_id="task-1", msg_type="request",
+agent.send("other-agent", thread_id="task-1", msg_type="request",
            content={"instruction": "do something"})
 
 # Read inbox
 messages = agent.receive()                    # all unread
-messages = agent.receive(task_id="task-1")    # filter by task
+messages = agent.receive(thread_id="task-1")    # filter by task
 messages = agent.receive(timeout=10)          # long-poll up to 10s
 
 # Acknowledge a message
@@ -47,27 +47,27 @@ main.register()
 worker.register()
 
 # Main sends task
-main.send("worker", task_id="t1", msg_type="request",
+main.send("worker", thread_id="t1", msg_type="request",
           content={"instruction": "translate this contract"})
 
 # Worker picks up
-msgs = worker.receive(task_id="t1")
+msgs = worker.receive(thread_id="t1")
 worker.ack(msgs[0]["id"])
 
 # Worker asks a question
-worker.send("main-agent", task_id="t1", msg_type="question",
+worker.send("main-agent", thread_id="t1", msg_type="question",
             content={"q": "Use term A or B?"})
 
 # Main answers
-msgs = main.receive(task_id="t1")
+msgs = main.receive(thread_id="t1")
 main.ack(msgs[0]["id"])
-main.send("worker", task_id="t1", msg_type="answer",
+main.send("worker", thread_id="t1", msg_type="answer",
           content={"a": "use B"})
 
 # Worker completes
-msgs = worker.receive(task_id="t1")
+msgs = worker.receive(thread_id="t1")
 worker.ack(msgs[0]["id"])
-worker.send("main-agent", task_id="t1", msg_type="done",
+worker.send("main-agent", thread_id="t1", msg_type="done",
             content={"result": "translated document"})
 
 # View full conversation
@@ -89,7 +89,7 @@ client.register_agent("my-agent")
 client.send("target-agent", "task-1", "my-agent", "request", {"data": "hello"})
 messages = client.receive("my-agent", status="unread")
 client.ack_inbox(messages[0]["id"])
-history = client.get_task_messages("task-1")
+history = client.get_thread_messages("task-1")
 
 # Legacy topic API
 client.create_topic("events")
@@ -107,6 +107,7 @@ client.ack(messages[0]["id"], "group1")
 | `answer` | Respond to a question |
 | `done` | Task completed |
 | `failed` | Task failed |
+| `message` | General-purpose message |
 
 ## Error handling
 
@@ -116,7 +117,7 @@ from stream0 import Agent, NotFoundError, AuthenticationError, TimeoutError
 agent = Agent("my-agent", url="http://localhost:8080")
 
 try:
-    agent.send("ghost", task_id="t1", msg_type="request")
+    agent.send("ghost", thread_id="t1", msg_type="request")
 except NotFoundError:
     print("Agent not registered")
 except AuthenticationError:

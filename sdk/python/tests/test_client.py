@@ -530,7 +530,7 @@ def test_send_message(client):
     )
     result = client.send(
         to="worker",
-        task_id="task-1",
+        thread_id="task-1",
         from_agent="main",
         msg_type="request",
         content={"instruction": "do work"},
@@ -539,7 +539,7 @@ def test_send_message(client):
 
     import json
     body = json.loads(responses.calls[0].request.body)
-    assert body["task_id"] == "task-1"
+    assert body["thread_id"] == "task-1"
     assert body["from"] == "main"
     assert body["type"] == "request"
     assert body["content"]["instruction"] == "do work"
@@ -566,7 +566,7 @@ def test_receive_messages(client):
             "messages": [
                 {
                     "id": "imsg-1",
-                    "task_id": "task-1",
+                    "thread_id": "task-1",
                     "from": "main",
                     "to": "worker",
                     "type": "request",
@@ -579,7 +579,7 @@ def test_receive_messages(client):
     )
     messages = client.receive("worker", status="unread")
     assert len(messages) == 1
-    assert messages[0]["task_id"] == "task-1"
+    assert messages[0]["thread_id"] == "task-1"
 
     request_url = responses.calls[0].request.url
     assert "status=unread" in request_url
@@ -593,10 +593,10 @@ def test_receive_with_task_filter(client):
         json={"messages": []},
         status=200,
     )
-    client.receive("worker", task_id="task-42")
+    client.receive("worker", thread_id="task-42")
 
     request_url = responses.calls[0].request.url
-    assert "task_id=task-42" in request_url
+    assert "thread_id=task-42" in request_url
 
 
 @responses.activate
@@ -650,34 +650,34 @@ def test_ack_inbox_message_not_found(client):
 
 
 @responses.activate
-def test_get_task_messages(client):
+def test_get_thread_messages(client):
     responses.add(
         responses.GET,
-        f"{BASE_URL}/tasks/task-1/messages",
+        f"{BASE_URL}/threads/task-1/messages",
         json={
             "messages": [
-                {"id": "imsg-1", "task_id": "task-1", "from": "main", "to": "worker", "type": "request"},
-                {"id": "imsg-2", "task_id": "task-1", "from": "worker", "to": "main", "type": "question"},
-                {"id": "imsg-3", "task_id": "task-1", "from": "main", "to": "worker", "type": "answer"},
-                {"id": "imsg-4", "task_id": "task-1", "from": "worker", "to": "main", "type": "done"},
+                {"id": "imsg-1", "thread_id": "task-1", "from": "main", "to": "worker", "type": "request"},
+                {"id": "imsg-2", "thread_id": "task-1", "from": "worker", "to": "main", "type": "question"},
+                {"id": "imsg-3", "thread_id": "task-1", "from": "main", "to": "worker", "type": "answer"},
+                {"id": "imsg-4", "thread_id": "task-1", "from": "worker", "to": "main", "type": "done"},
             ]
         },
         status=200,
     )
-    messages = client.get_task_messages("task-1")
+    messages = client.get_thread_messages("task-1")
     assert len(messages) == 4
     assert [m["type"] for m in messages] == ["request", "question", "answer", "done"]
 
 
 @responses.activate
-def test_get_task_messages_empty(client):
+def test_get_thread_messages_empty(client):
     responses.add(
         responses.GET,
-        f"{BASE_URL}/tasks/nonexistent/messages",
+        f"{BASE_URL}/threads/nonexistent/messages",
         json={"messages": []},
         status=200,
     )
-    messages = client.get_task_messages("nonexistent")
+    messages = client.get_thread_messages("nonexistent")
     assert messages == []
 
 
@@ -706,7 +706,7 @@ def test_agent_send():
         status=201,
     )
     with Agent("my-agent", url=BASE_URL) as agent:
-        result = agent.send("other-agent", task_id="t1", msg_type="request", content={"x": 1})
+        result = agent.send("other-agent", thread_id="t1", msg_type="request", content={"x": 1})
         assert result["message_id"] == "imsg-1"
 
     # Verify from field is set to agent_id
@@ -722,7 +722,7 @@ def test_agent_receive():
         f"{BASE_URL}/agents/my-agent/inbox",
         json={
             "messages": [
-                {"id": "imsg-1", "task_id": "t1", "from": "other", "type": "request", "status": "unread"},
+                {"id": "imsg-1", "thread_id": "t1", "from": "other", "type": "request", "status": "unread"},
             ]
         },
         status=200,
@@ -753,7 +753,7 @@ def test_agent_ack():
 def test_agent_history():
     responses.add(
         responses.GET,
-        f"{BASE_URL}/tasks/t1/messages",
+        f"{BASE_URL}/threads/t1/messages",
         json={
             "messages": [
                 {"id": "imsg-1", "type": "request"},
@@ -800,7 +800,7 @@ def test_agent_full_conversation():
     responses.add(
         responses.GET,
         f"{BASE_URL}/agents/translator/inbox",
-        json={"messages": [{"id": "imsg-1", "task_id": "t1", "type": "request", "from": "main"}]},
+        json={"messages": [{"id": "imsg-1", "thread_id": "t1", "type": "request", "from": "main"}]},
         status=200,
     )
 
@@ -816,7 +816,7 @@ def test_agent_full_conversation():
     responses.add(
         responses.GET,
         f"{BASE_URL}/agents/main/inbox",
-        json={"messages": [{"id": "imsg-2", "task_id": "t1", "type": "question", "from": "translator"}]},
+        json={"messages": [{"id": "imsg-2", "thread_id": "t1", "type": "question", "from": "translator"}]},
         status=200,
     )
 
@@ -839,7 +839,7 @@ def test_agent_full_conversation():
     # Full conversation history
     responses.add(
         responses.GET,
-        f"{BASE_URL}/tasks/t1/messages",
+        f"{BASE_URL}/threads/t1/messages",
         json={
             "messages": [
                 {"id": "imsg-1", "type": "request", "from": "main", "to": "translator"},
@@ -858,23 +858,23 @@ def test_agent_full_conversation():
     translator.register()
 
     # Main sends task
-    main.send("translator", task_id="t1", msg_type="request", content={"text": "translate this"})
+    main.send("translator", thread_id="t1", msg_type="request", content={"text": "translate this"})
 
     # Translator picks up
-    msgs = translator.receive(task_id="t1")
+    msgs = translator.receive(thread_id="t1")
     assert len(msgs) == 1
     assert msgs[0]["type"] == "request"
 
     # Translator asks question
-    translator.send("main", task_id="t1", msg_type="question", content={"q": "A or B?"})
+    translator.send("main", thread_id="t1", msg_type="question", content={"q": "A or B?"})
 
     # Main answers
-    msgs = main.receive(task_id="t1")
+    msgs = main.receive(thread_id="t1")
     assert msgs[0]["type"] == "question"
-    main.send("translator", task_id="t1", msg_type="answer", content={"a": "use A"})
+    main.send("translator", thread_id="t1", msg_type="answer", content={"a": "use A"})
 
     # Translator completes
-    translator.send("main", task_id="t1", msg_type="done", content={"result": "translated"})
+    translator.send("main", thread_id="t1", msg_type="done", content={"result": "translated"})
 
     # Check full history
     history = main.history("t1")

@@ -49,7 +49,7 @@ echo ""
 
 echo "--- Step 2: Orchestrator sends code review task ---"
 curl -s -X POST "$URL/agents/reviewer/inbox" -H "$H" -d '{
-  "task_id": "review-pr-42",
+  "thread_id": "review-pr-42",
   "from": "orchestrator",
   "type": "request",
   "content": {
@@ -61,7 +61,7 @@ curl -s -X POST "$URL/agents/reviewer/inbox" -H "$H" -d '{
 echo ""
 
 echo "--- Step 3: Reviewer picks up the task ---"
-MESSAGES=$(curl -s "$URL/agents/reviewer/inbox?status=unread&task_id=review-pr-42")
+MESSAGES=$(curl -s "$URL/agents/reviewer/inbox?status=unread&thread_id=review-pr-42")
 echo "$MESSAGES" | python3 -m json.tool 2>/dev/null || echo "$MESSAGES"
 MSG_ID=$(echo "$MESSAGES" | python3 -c "import sys,json; print(json.load(sys.stdin)['messages'][0]['id'])" 2>/dev/null || echo "")
 if [ -n "$MSG_ID" ]; then
@@ -72,7 +72,7 @@ echo ""
 echo "--- Step 4: Reviewer asks a clarifying question ---"
 echo "    (This is the key feature — mid-task dialogue)"
 curl -s -X POST "$URL/agents/orchestrator/inbox" -H "$H" -d '{
-  "task_id": "review-pr-42",
+  "thread_id": "review-pr-42",
   "from": "reviewer",
   "type": "question",
   "content": {
@@ -84,13 +84,13 @@ curl -s -X POST "$URL/agents/orchestrator/inbox" -H "$H" -d '{
 echo ""
 
 echo "--- Step 5: Orchestrator answers ---"
-Q_MSG=$(curl -s "$URL/agents/orchestrator/inbox?status=unread&task_id=review-pr-42")
+Q_MSG=$(curl -s "$URL/agents/orchestrator/inbox?status=unread&thread_id=review-pr-42")
 Q_ID=$(echo "$Q_MSG" | python3 -c "import sys,json; print(json.load(sys.stdin)['messages'][0]['id'])" 2>/dev/null || echo "")
 if [ -n "$Q_ID" ]; then
     curl -s -X POST "$URL/inbox/messages/$Q_ID/ack" > /dev/null
 fi
 curl -s -X POST "$URL/agents/reviewer/inbox" -H "$H" -d '{
-  "task_id": "review-pr-42",
+  "thread_id": "review-pr-42",
   "from": "orchestrator",
   "type": "answer",
   "content": {"answer": "Intentional — it is a test override. Safe to approve."}
@@ -98,13 +98,13 @@ curl -s -X POST "$URL/agents/reviewer/inbox" -H "$H" -d '{
 echo ""
 
 echo "--- Step 6: Reviewer completes the review ---"
-A_MSG=$(curl -s "$URL/agents/reviewer/inbox?status=unread&task_id=review-pr-42")
+A_MSG=$(curl -s "$URL/agents/reviewer/inbox?status=unread&thread_id=review-pr-42")
 A_ID=$(echo "$A_MSG" | python3 -c "import sys,json; print(json.load(sys.stdin)['messages'][0]['id'])" 2>/dev/null || echo "")
 if [ -n "$A_ID" ]; then
     curl -s -X POST "$URL/inbox/messages/$A_ID/ack" > /dev/null
 fi
 curl -s -X POST "$URL/agents/orchestrator/inbox" -H "$H" -d '{
-  "task_id": "review-pr-42",
+  "thread_id": "review-pr-42",
   "from": "reviewer",
   "type": "done",
   "content": {
@@ -118,13 +118,13 @@ echo "================================================"
 echo "  Full conversation history"
 echo "================================================"
 echo ""
-curl -s "$URL/tasks/review-pr-42/messages" | python3 -m json.tool 2>/dev/null || curl -s "$URL/tasks/review-pr-42/messages"
+curl -s "$URL/threads/review-pr-42/messages" | python3 -m json.tool 2>/dev/null || curl -s "$URL/threads/review-pr-42/messages"
 echo ""
 
 echo "================================================"
 echo "  Demo complete!"
 echo ""
-echo "  4 messages, 1 task_id, 2 agents."
+echo "  4 messages, 1 thread_id, 2 agents."
 echo "  The reviewer asked a question mid-task,"
 echo "  got an answer, and made the right decision."
 echo "================================================"

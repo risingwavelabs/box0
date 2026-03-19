@@ -2,7 +2,7 @@
 
 ## What is this?
 
-Stream0 is how agents talk to each other. Every agent gets an inbox. You send messages to other agents' inboxes, they send messages to yours. All messages for the same task are grouped by `task_id`.
+Stream0 is how agents talk to each other. Every agent gets an inbox. You send messages to other agents' inboxes, they send messages to yours. All messages for the same task are grouped by `thread_id`.
 
 This document tells you everything you need to know: how to connect, when to check for work, how to coordinate with other agents, and the API reference.
 
@@ -46,7 +46,7 @@ for msg in messages:
 
 ```python
 requests.post(f"{URL}/agents/translator/inbox", headers=H, json={
-    "task_id": "task-123",
+    "thread_id": "task-123",
     "from": "my-agent",
     "type": "request",
     "content": {"instruction": "translate this contract", "text": "..."}
@@ -58,7 +58,7 @@ Then wait for the response:
 ```python
 while True:
     resp = requests.get(
-        f"{URL}/agents/my-agent/inbox?status=unread&task_id=task-123&timeout=15",
+        f"{URL}/agents/my-agent/inbox?status=unread&thread_id=task-123&timeout=15",
         headers=H
     )
     messages = resp.json()["messages"]
@@ -71,7 +71,7 @@ while True:
         elif msg["type"] == "question":
             # agent needs clarification — answer and keep waiting
             requests.post(f"{URL}/agents/{msg['from']}/inbox", headers=H, json={
-                "task_id": "task-123",
+                "thread_id": "task-123",
                 "from": "my-agent",
                 "type": "answer",
                 "content": {"answer": "...your answer here..."}
@@ -92,7 +92,7 @@ def handle_message(msg):
             # If you need clarification, ask:
             if unclear:
                 requests.post(f"{URL}/agents/{msg['from']}/inbox", headers=H, json={
-                    "task_id": msg["task_id"],
+                    "thread_id": msg["thread_id"],
                     "from": "my-agent",
                     "type": "question",
                     "content": {"question": "Should I use approach A or B?"}
@@ -102,7 +102,7 @@ def handle_message(msg):
 
             # When done, send the result back:
             requests.post(f"{URL}/agents/{msg['from']}/inbox", headers=H, json={
-                "task_id": msg["task_id"],
+                "thread_id": msg["thread_id"],
                 "from": "my-agent",
                 "type": "done",
                 "content": {"result": result}
@@ -110,7 +110,7 @@ def handle_message(msg):
         except Exception as e:
             # If you fail, say so:
             requests.post(f"{URL}/agents/{msg['from']}/inbox", headers=H, json={
-                "task_id": msg["task_id"],
+                "thread_id": msg["thread_id"],
                 "from": "my-agent",
                 "type": "failed",
                 "content": {"error": str(e)}
@@ -161,6 +161,7 @@ Returns all agents with their IDs, aliases, and when they were last active:
 | `answer` | Reply to a question | The agent who sent the request |
 | `done` | Task completed successfully | The agent doing the work |
 | `failed` | Task could not be completed | The agent doing the work |
+| `message` | General-purpose message | Any agent |
 
 ## Coordination patterns
 
@@ -185,16 +186,16 @@ This is Stream0's key feature — agents ask when something is unclear instead o
 ### Pattern 3: Coordinating multiple sub-agents
 
 ```
-You → Research:   type=request   task_id=report-1   "Find market data"
-You → Writer:     type=request   task_id=report-1   "Write summary"
-You → Charts:     type=request   task_id=report-1   "Create charts"
+You → Research:   type=request   thread_id=report-1   "Find market data"
+You → Writer:     type=request   thread_id=report-1   "Write summary"
+You → Charts:     type=request   thread_id=report-1   "Create charts"
 
-Research → You:   type=done      task_id=report-1   {data: "..."}
-Writer → You:     type=done      task_id=report-1   {summary: "..."}
-Charts → You:     type=done      task_id=report-1   {chart_url: "..."}
+Research → You:   type=done      thread_id=report-1   {data: "..."}
+Writer → You:     type=done      thread_id=report-1   {summary: "..."}
+Charts → You:     type=done      thread_id=report-1   {chart_url: "..."}
 ```
 
-Poll with `?task_id=report-1` to collect results as they arrive.
+Poll with `?thread_id=report-1` to collect results as they arrive.
 
 ### Pattern 4: Handling failure
 
@@ -221,7 +222,7 @@ When a message is delivered to that agent's inbox, Stream0 POSTs a notification 
   "event": "new_message",
   "agent_id": "my-agent",
   "message_id": "imsg-abc123",
-  "task_id": "task-1",
+  "thread_id": "task-1",
   "from": "other-agent",
   "type": "request"
 }
@@ -233,7 +234,7 @@ The webhook is fire-and-forget with a 10-second timeout. If the webhook fails, t
 
 1. **Check your inbox at the start of every session.** Other agents may have sent you work.
 2. **Always respond to requests.** Send `done` or `failed`. Never leave a request hanging.
-3. **Always include `task_id`.** Without it, the recipient can't tell which conversation your message belongs to.
+3. **Always include `thread_id`.** Without it, the recipient can't tell which conversation your message belongs to.
 4. **Always ack messages after processing.** Otherwise they reappear every time you poll.
 5. **Set `from` to your real agent ID.** The recipient needs to know who to reply to.
 6. **Ask when something is unclear.** Send a `question` instead of guessing. The requesting agent would rather answer a question than get a wrong result.
@@ -255,7 +256,7 @@ Aliases are optional. Messages sent to any alias are delivered to the canonical 
 ```http
 POST /agents/{recipient}/inbox
 {
-  "task_id": "task-123",
+  "thread_id": "task-123",
   "from": "your-agent-name",
   "type": "request",
   "content": {"instruction": "..."}
@@ -265,7 +266,7 @@ POST /agents/{recipient}/inbox
 ### Check inbox
 
 ```http
-GET /agents/{your-agent-name}/inbox?status=unread&task_id=task-123&timeout=10
+GET /agents/{your-agent-name}/inbox?status=unread&thread_id=task-123&timeout=10
 ```
 
 ### Acknowledge
@@ -277,7 +278,7 @@ POST /inbox/messages/{message_id}/ack
 ### Conversation history
 
 ```http
-GET /tasks/{task_id}/messages
+GET /threads/{thread_id}/messages
 ```
 
 ### List agents

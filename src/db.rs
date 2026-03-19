@@ -48,7 +48,7 @@ pub struct Agent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InboxMessage {
     pub id: String,
-    pub task_id: String,
+    pub thread_id: String,
     #[serde(rename = "from")]
     pub from_agent: String,
     #[serde(rename = "to")]
@@ -164,7 +164,7 @@ impl Database {
             CREATE TABLE IF NOT EXISTS inbox_messages (
                 id TEXT PRIMARY KEY,
                 tenant TEXT NOT NULL DEFAULT 'default',
-                task_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
                 from_agent TEXT NOT NULL,
                 to_agent TEXT NOT NULL,
                 type TEXT NOT NULL,
@@ -178,8 +178,8 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_leases_group ON leases(consumer_group);
             CREATE INDEX IF NOT EXISTS idx_replies_created ON replies(created_at);
             CREATE INDEX IF NOT EXISTS idx_inbox_tenant_to_status ON inbox_messages(tenant, to_agent, status);
-            CREATE INDEX IF NOT EXISTS idx_inbox_tenant_task ON inbox_messages(tenant, task_id);
-            CREATE INDEX IF NOT EXISTS idx_inbox_tenant_to_task ON inbox_messages(tenant, to_agent, task_id);
+            CREATE INDEX IF NOT EXISTS idx_inbox_tenant_thread ON inbox_messages(tenant, thread_id);
+            CREATE INDEX IF NOT EXISTS idx_inbox_tenant_to_thread ON inbox_messages(tenant, to_agent, thread_id);
             ",
         )?;
         Ok(())
@@ -662,7 +662,7 @@ impl Database {
     pub fn send_inbox_message(
         &self,
         tenant: &str,
-        task_id: &str,
+        thread_id: &str,
         from: &str,
         to: &str,
         msg_type: &str,
@@ -673,8 +673,8 @@ impl Database {
         let content_str = content.map(|c| serde_json::to_string(c).unwrap_or_default());
 
         conn.execute(
-            "INSERT INTO inbox_messages (id, tenant, task_id, from_agent, to_agent, type, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![msg_id, tenant, task_id, from, to, msg_type, content_str],
+            "INSERT INTO inbox_messages (id, tenant, thread_id, from_agent, to_agent, type, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![msg_id, tenant, thread_id, from, to, msg_type, content_str],
         )?;
 
         let ts: String = conn.query_row(
@@ -685,7 +685,7 @@ impl Database {
 
         Ok(InboxMessage {
             id: msg_id,
-            task_id: task_id.to_string(),
+            thread_id: thread_id.to_string(),
             from_agent: from.to_string(),
             to_agent: to.to_string(),
             msg_type: msg_type.to_string(),
@@ -700,11 +700,11 @@ impl Database {
         tenant: &str,
         agent_id: &str,
         status: Option<&str>,
-        task_id: Option<&str>,
+        thread_id: Option<&str>,
     ) -> Result<Vec<InboxMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut query =
-            "SELECT id, task_id, from_agent, to_agent, type, content, status, created_at FROM inbox_messages WHERE tenant = ?1 AND to_agent = ?2"
+            "SELECT id, thread_id, from_agent, to_agent, type, content, status, created_at FROM inbox_messages WHERE tenant = ?1 AND to_agent = ?2"
                 .to_string();
         let mut param_idx = 3;
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(tenant.to_string()), Box::new(agent_id.to_string())];
@@ -714,8 +714,8 @@ impl Database {
             param_values.push(Box::new(s.to_string()));
             param_idx += 1;
         }
-        if let Some(t) = task_id {
-            query += &format!(" AND task_id = ?{}", param_idx);
+        if let Some(t) = thread_id {
+            query += &format!(" AND thread_id = ?{}", param_idx);
             param_values.push(Box::new(t.to_string()));
         }
         query += " ORDER BY created_at ASC";
@@ -728,7 +728,7 @@ impl Database {
                 let ts: String = row.get(7)?;
                 Ok(InboxMessage {
                     id: row.get(0)?,
-                    task_id: row.get(1)?,
+                    thread_id: row.get(1)?,
                     from_agent: row.get(2)?,
                     to_agent: row.get(3)?,
                     msg_type: row.get(4)?,
@@ -754,19 +754,19 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_task_messages(&self, tenant: &str, task_id: &str) -> Result<Vec<InboxMessage>> {
+    pub fn get_thread_messages(&self, tenant: &str, thread_id: &str) -> Result<Vec<InboxMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, task_id, from_agent, to_agent, type, content, status, created_at
-             FROM inbox_messages WHERE tenant = ?1 AND task_id = ?2 ORDER BY created_at ASC",
+            "SELECT id, thread_id, from_agent, to_agent, type, content, status, created_at
+             FROM inbox_messages WHERE tenant = ?1 AND thread_id = ?2 ORDER BY created_at ASC",
         )?;
         let messages = stmt
-            .query_map(params![tenant, task_id], |row| {
+            .query_map(params![tenant, thread_id], |row| {
                 let content_str: Option<String> = row.get(5)?;
                 let ts: String = row.get(7)?;
                 Ok(InboxMessage {
                     id: row.get(0)?,
-                    task_id: row.get(1)?,
+                    thread_id: row.get(1)?,
                     from_agent: row.get(2)?,
                     to_agent: row.get(3)?,
                     msg_type: row.get(4)?,

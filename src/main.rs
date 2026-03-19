@@ -116,7 +116,7 @@ struct RegisterAgentRequest {
 
 #[derive(Deserialize)]
 struct SendInboxRequest {
-    task_id: String,
+    thread_id: String,
     from: String,
     #[serde(rename = "type")]
     msg_type: String,
@@ -129,7 +129,7 @@ struct InboxQuery {
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
-    task_id: Option<String>,
+    thread_id: Option<String>,
     #[serde(default)]
     timeout: Option<f64>,
 }
@@ -447,17 +447,17 @@ async fn send_inbox_message_handler(
     };
 
     // Validate message type
-    let valid_types = ["request", "question", "answer", "done", "failed"];
+    let valid_types = ["request", "question", "answer", "done", "failed", "message"];
     if !valid_types.contains(&req.msg_type.as_str()) {
         return error_response(
             StatusCode::BAD_REQUEST,
-            "type must be one of: request, question, answer, done, failed",
+            "type must be one of: request, question, answer, done, failed, message",
         );
     }
 
     match state.db.send_inbox_message(
         &tenant,
-        &req.task_id,
+        &req.thread_id,
         &req.from,
         &resolved_id,
         &req.msg_type,
@@ -470,7 +470,7 @@ async fn send_inbox_message_handler(
                     "event": "new_message",
                     "agent_id": resolved_id,
                     "message_id": msg.id,
-                    "task_id": req.task_id,
+                    "thread_id": req.thread_id,
                     "from": req.from,
                     "type": req.msg_type,
                 });
@@ -520,7 +520,7 @@ async fn get_inbox_messages_handler(
             &tenant,
             &resolved_id,
             params.status.as_deref(),
-            params.task_id.as_deref(),
+            params.thread_id.as_deref(),
         ) {
             Ok(messages) if !messages.is_empty() || timeout <= 0.0 => {
                 return (StatusCode::OK, Json(serde_json::json!({"messages": messages}))).into_response();
@@ -552,12 +552,12 @@ async fn ack_inbox_message_handler(
     }
 }
 
-async fn get_task_messages_handler(
+async fn get_thread_messages_handler(
     State(state): State<SharedState>,
     Extension(Tenant(tenant)): Extension<Tenant>,
-    Path(task_id): Path<String>,
+    Path(thread_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.get_task_messages(&tenant, &task_id) {
+    match state.db.get_thread_messages(&tenant, &thread_id) {
         Ok(messages) => (StatusCode::OK, Json(serde_json::json!({"messages": messages}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -623,7 +623,7 @@ async fn main() {
         .route("/agents/{agent_id}", delete(delete_agent_handler))
         .route("/agents/{agent_id}/inbox", get(get_inbox_messages_handler).post(send_inbox_message_handler))
         .route("/inbox/messages/{message_id}/ack", post(ack_inbox_message_handler))
-        .route("/tasks/{task_id}/messages", get(get_task_messages_handler))
+        .route("/threads/{thread_id}/messages", get(get_thread_messages_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
     let app = Router::new()

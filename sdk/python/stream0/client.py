@@ -272,20 +272,20 @@ class Stream0Client:
         )
         return self._handle_response(resp)
 
-    def send(self, to, task_id, from_agent, msg_type, content=None):
+    def send(self, to, thread_id, from_agent, msg_type, content=None):
         """Send a message to an agent's inbox.
 
         Args:
             to: Target agent ID.
-            task_id: Task/conversation identifier.
+            thread_id: Thread/conversation identifier.
             from_agent: Sender agent ID.
-            msg_type: One of: request, question, answer, done, failed.
+            msg_type: One of: request, question, answer, done, failed, message.
             content: Optional message content (dict).
 
         Returns:
             Dict with message_id and created_at.
         """
-        body = {"task_id": task_id, "from": from_agent, "type": msg_type}
+        body = {"thread_id": thread_id, "from": from_agent, "type": msg_type}
         if content is not None:
             body["content"] = content
         resp = self._session.post(
@@ -295,13 +295,13 @@ class Stream0Client:
         )
         return self._handle_response(resp)
 
-    def receive(self, agent_id, status=None, task_id=None, timeout=0):
+    def receive(self, agent_id, status=None, thread_id=None, timeout=0):
         """Poll an agent's inbox for messages.
 
         Args:
             agent_id: Agent whose inbox to read.
             status: Filter by status ('unread' or 'acked'). None for all.
-            task_id: Filter by task_id. None for all.
+            thread_id: Filter by thread_id. None for all.
             timeout: Long-poll timeout in seconds (0 for immediate).
 
         Returns:
@@ -310,8 +310,8 @@ class Stream0Client:
         params = {}
         if status:
             params["status"] = status
-        if task_id:
-            params["task_id"] = task_id
+        if thread_id:
+            params["thread_id"] = thread_id
         if timeout > 0:
             params["timeout"] = timeout
 
@@ -339,17 +339,17 @@ class Stream0Client:
         )
         return self._handle_response(resp)
 
-    def get_task_messages(self, task_id):
-        """Get the full conversation history for a task.
+    def get_thread_messages(self, thread_id):
+        """Get the full conversation history for a thread.
 
         Args:
-            task_id: Task/conversation identifier.
+            thread_id: Thread/conversation identifier.
 
         Returns:
             List of message dicts in chronological order.
         """
         resp = self._session.get(
-            self._url(f"/tasks/{task_id}/messages"),
+            self._url(f"/threads/{thread_id}/messages"),
             timeout=self.timeout,
         )
         result = self._handle_response(resp)
@@ -373,7 +373,7 @@ class Agent:
 
         agent = Agent("my-agent", url="http://localhost:8080")
         agent.register()
-        agent.send("other-agent", task_id="t1", msg_type="request", content={...})
+        agent.send("other-agent", thread_id="t1", msg_type="request", content={...})
         messages = agent.receive()
         agent.ack(messages[0]["id"])
     """
@@ -388,21 +388,21 @@ class Agent:
         """Register this agent with stream0."""
         return self.client.register_agent(self.agent_id, aliases=self.aliases, webhook=self.webhook)
 
-    def send(self, to, task_id, msg_type, content=None):
+    def send(self, to, thread_id, msg_type, content=None):
         """Send a message to another agent's inbox."""
-        return self.client.send(to, task_id, self.agent_id, msg_type, content)
+        return self.client.send(to, thread_id, self.agent_id, msg_type, content)
 
-    def receive(self, status="unread", task_id=None, timeout=0):
+    def receive(self, status="unread", thread_id=None, timeout=0):
         """Poll this agent's inbox."""
-        return self.client.receive(self.agent_id, status=status, task_id=task_id, timeout=timeout)
+        return self.client.receive(self.agent_id, status=status, thread_id=thread_id, timeout=timeout)
 
     def ack(self, message_id):
         """Acknowledge a message."""
         return self.client.ack_inbox(message_id)
 
-    def history(self, task_id):
-        """Get full conversation history for a task."""
-        return self.client.get_task_messages(task_id)
+    def history(self, thread_id):
+        """Get full conversation history for a thread."""
+        return self.client.get_thread_messages(thread_id)
 
     def close(self):
         """Close the underlying client."""

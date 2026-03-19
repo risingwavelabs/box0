@@ -4,7 +4,7 @@ This file is for Claude Code (or any AI agent) working on Stream0. Read this fir
 
 ## What is Stream0?
 
-An agent communication layer. Every agent gets an inbox. Agents send messages to each other's inboxes, grouped by `task_id`. Supports multi-turn conversations (request → question → answer → done).
+An agent communication layer. Every agent gets an inbox. Agents send messages to each other's inboxes, grouped by `thread_id`. Supports multi-turn conversations (request → question → answer → done).
 
 ## Project structure
 
@@ -42,12 +42,12 @@ STREAM0_URL=http://localhost:8080 pytest tests/test_integration.py -v
 ### Inbox API
 
 - `POST /agents` — register agent `{"id": "agent-name"}`
-- `POST /agents/{id}/inbox` — send message `{"task_id", "from", "type", "content"}`
-- `GET /agents/{id}/inbox?status=unread&task_id=X&timeout=10` — poll inbox
+- `POST /agents/{id}/inbox` — send message `{"thread_id", "from", "type", "content"}`
+- `GET /agents/{id}/inbox?status=unread&thread_id=X&timeout=10` — poll inbox
 - `POST /inbox/messages/{id}/ack` — mark as read
-- `GET /tasks/{task_id}/messages` — conversation history
+- `GET /threads/{thread_id}/messages` — conversation history
 
-Message types: `request`, `question`, `answer`, `done`, `failed`
+Message types: `request`, `question`, `answer`, `done`, `failed`, `message`
 
 ### Legacy Topic API
 
