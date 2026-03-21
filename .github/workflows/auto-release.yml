@@ -13,60 +13,118 @@ permissions:
   contents: write
 
 jobs:
-  bump-and-tag:
+  bump:
     runs-on: ubuntu-latest
-
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check if version already tagged
-        id: check
+      - name: Determine version
+        id: version
         run: |
           CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+
           if git tag -l "v$CURRENT" | grep -q .; then
-            echo "needs_bump=true" >> $GITHUB_OUTPUT
-            echo "Current v$CURRENT already tagged, will bump"
+            MAJOR=$(echo $CURRENT | cut -d. -f1)
+            MINOR=$(echo $CURRENT | cut -d. -f2)
+            PATCH=$(echo $CURRENT | cut -d. -f3)
+            NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+
+            sed -i "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" Cargo.toml
+            sed -i "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" src/main.rs
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add Cargo.toml src/main.rs
+            git commit -m "Bump version to $NEW_VERSION [skip ci]"
+            git push
+
+            echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
           else
-            echo "needs_bump=false" >> $GITHUB_OUTPUT
-            echo "v$CURRENT not yet tagged, will tag as-is"
+            echo "version=$CURRENT" >> $GITHUB_OUTPUT
           fi
-          echo "current=$CURRENT" >> $GITHUB_OUTPUT
 
-      - name: Bump patch version
-        if: steps.check.outputs.needs_bump == 'true'
-        id: bump
-        run: |
-          CURRENT="${{ steps.check.outputs.current }}"
-          # Split version
-          MAJOR=$(echo $CURRENT | cut -d. -f1)
-          MINOR=$(echo $CURRENT | cut -d. -f2)
-          PATCH=$(echo $CURRENT | cut -d. -f3)
-          NEW_PATCH=$((PATCH + 1))
-          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
-          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-
-          # Update Cargo.toml
-          sed -i "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" Cargo.toml
-
-          # Update version string in main.rs
-          sed -i "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" src/main.rs
-
-          # Commit
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml src/main.rs
-          git commit -m "Bump version to $NEW_VERSION [skip ci]"
-          git push
+          echo "tag=v${NEW_VERSION:-$CURRENT}" >> $GITHUB_OUTPUT
 
       - name: Create tag
         run: |
-          if [ "${{ steps.check.outputs.needs_bump }}" == "true" ]; then
-            VERSION="${{ steps.bump.outputs.new_version }}"
-          else
-            VERSION="${{ steps.check.outputs.current }}"
-          fi
-          git tag "v$VERSION"
-          git push origin "v$VERSION"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+  build:
+    needs: bump
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: stream0-linux-amd64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: stream0-linux-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: stream0-darwin-amd64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: stream0-darwin-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.tag }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename binary
+        run: cp target/${{ matrix.target }}/release/stream0 ${{ matrix.name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
+  release:
+    needs: [bump, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.bump.outputs.tag }}
+          files: |
+            artifacts/stream0-linux-amd64/stream0-linux-amd64
+            artifacts/stream0-linux-arm64/stream0-linux-arm64
+            artifacts/stream0-darwin-amd64/stream0-darwin-amd64
+            artifacts/stream0-darwin-arm64/stream0-darwin-arm64
+          generate_release_notes: true
