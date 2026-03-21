@@ -98,7 +98,7 @@ After=network.target
 Type=simple
 User=stream0
 Group=stream0
-ExecStart=/usr/local/bin/stream0 -config /etc/stream0/stream0.yaml
+ExecStart=/usr/local/bin/stream0 --config /etc/stream0/stream0.yaml
 Restart=always
 RestartSec=5
 
@@ -119,7 +119,7 @@ sudo systemctl start stream0
 
 ```bash
 curl http://localhost:8080/health
-# {"status":"healthy","version":"0.1.0-go"}
+# {"status":"healthy","version":"0.3.2"}
 ```
 
 ## Authentication
