@@ -48,9 +48,10 @@ bh login http://localhost:8080
 # Expected: "Claude Code skill installed."
 # Expected: "Login complete. Server: http://localhost:8080"
 
-# 2. Verify skill file was created
-cat ~/.claude/skills/bh.md | head -5
-# Expected: YAML frontmatter with name: boxhouse
+# 2. Verify skill was installed (directory with SKILL.md)
+ls ~/.claude/skills/bh/SKILL.md
+cat ~/.claude/skills/bh/SKILL.md | head -5
+# Expected: YAML frontmatter with name: bh
 
 # 3. Verify config was created
 cat ~/.bh/config.toml
@@ -85,8 +86,8 @@ bh worker ls
 # 10. Logout
 bh logout
 # Expected: "Logged out."
-ls ~/.claude/skills/bh.md
-# Expected: file not found
+ls ~/.claude/skills/bh/
+# Expected: directory not found
 cat ~/.bh/config.toml
 # Expected: file not found
 ```
@@ -439,7 +440,7 @@ After testing:
 
 # Remove local state
 rm -rf ~/.bh/
-rm -f ~/.claude/skills/bh.md
+rm -rf ~/.claude/skills/bh
 
 # Remove test databases
 rm -f bh.db

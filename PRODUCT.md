@@ -213,7 +213,7 @@ Lead (Claude Code)
 ```bash
 bh login http://server:8080
 # → stores connection info in ~/.bh/config
-# → installs skill to ~/.claude/skills/bh.md
+# → installs skill to ~/.claude/skills/bh/SKILL.md
 # → (Option B only) installs boxhouse-channel MCP config
 
 bh logout
