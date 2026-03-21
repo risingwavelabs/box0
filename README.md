@@ -4,23 +4,25 @@ A messaging layer for AI agents. Each agent gets an inbox. Messages are grouped 
 
 ## What it does
 
-Stream0 sits between agents and routes messages. Any agent that can make HTTP requests can use it.
+Stream0 sits between agents and routes messages. Any agent that can make HTTP requests can use it: Claude Code, Codex, Python scripts, or anything else.
 
 ```
 Agent A                   Stream0              Agent B
   |                          |                    |
-  |  POST /agents/b/inbox   |                    |
+  |  sends request           |                    |
   |  ────────────────>  stores in inbox           |
-  |                          |  GET /inbox        |
   |                          |  ────────────>     |
+  |                          |  agent B picks up  |
   |                          |  <────────────     |
-  |  GET /agents/a/inbox     |  POST /agents/a/inbox
+  |  gets result back        |                    |
   |  <────────────────       |                    |
 ```
 
-Stream0 doesn't care what your agents are. Claude Code, Codex, a Python script, a curl command. If it speaks HTTP, it can send and receive messages.
-
 ## Getting started
+
+This walkthrough uses Claude Code, but Stream0 works with any agent. See the [API](#api) section if you're using a different runtime.
+
+> **Note:** The Claude Code integration uses the [channel](https://docs.anthropic.com/en/docs/claude-code/channels) capability, which is in Anthropic's experimental research preview. The `--dangerously-load-development-channels` flag is required until channels are generally available.
 
 ### 1. Install and start the server
 
@@ -29,90 +31,43 @@ curl -fsSL https://stream0.dev/install.sh | sh
 stream0
 ```
 
-### 2. Register two agents
+### 2. Register and set up a second agent
 
-In a second terminal:
-
-```bash
-stream0 agent start --name alice --description "Agent A"
-stream0 agent start --name bob --description "Agent B"
-```
-
-### 3. Send a message from Alice to Bob
+In a second terminal, register an agent and set up Claude Code to listen for tasks:
 
 ```bash
-curl -X POST http://localhost:8080/agents/bob/inbox \
-  -H "Content-Type: application/json" \
-  -d '{
-    "thread_id": "debate-1",
-    "from": "alice",
-    "type": "request",
-    "content": {"task": "Argue why Codex is better than Claude Code"}
-  }'
-```
-
-### 4. Bob checks his inbox
-
-```bash
-curl "http://localhost:8080/agents/bob/inbox?status=unread&timeout=30"
-```
-
-Bob sees the request, does the work, and sends the result back:
-
-```bash
-curl -X POST http://localhost:8080/agents/alice/inbox \
-  -H "Content-Type: application/json" \
-  -d '{
-    "thread_id": "debate-1",
-    "from": "bob",
-    "type": "done",
-    "content": {"argument": "Codex is open source, supports any model, and..."}
-  }'
-```
-
-### 5. Alice reads the response
-
-```bash
-curl "http://localhost:8080/agents/alice/inbox?status=unread&thread_id=debate-1"
-```
-
-That's the core loop. Send a request, poll for the response. Any HTTP client can do this.
-
-## Integrations
-
-The Getting Started above uses curl. In practice, you want your agents to send and receive automatically. Stream0 supports any runtime that can make HTTP calls. Here's how to set up Claude Code.
-
-### Claude Code
-
-Stream0 provides a [channel plugin](https://docs.anthropic.com/en/docs/claude-code/channels) that automatically pushes incoming messages into your Claude Code session.
-
-> **Note:** Claude Code channels are in Anthropic's experimental research preview. The `--dangerously-load-development-channels` flag is required until channels are generally available.
-
-**Set up a listener:**
-
-```bash
-cd ~/my-project
-stream0 init claude --name my-agent
-```
-
-This writes a `.mcp.json` in the current directory. Then start Claude Code:
-
-```bash
+stream0 agent start --name agent-b --description "A second AI agent"
+cd ~/any-project
+stream0 init claude --name agent-b
 claude --dangerously-load-development-channels server:stream0-channel
 ```
 
-Messages sent to `my-agent`'s inbox will now appear in the Claude Code session automatically. Claude Code can reply using the `reply` and `ack` tools provided by the channel.
+This starts a Claude Code instance that automatically receives tasks through Stream0.
 
-The channel also provides `discover` (list available agents) and `delegate` (send a task and wait for the result) tools, so you can say things like:
+### 3. Set up your own Claude Code
+
+In a third terminal, set up your Claude Code the same way:
+
+```bash
+cd ~/my-project
+stream0 init claude --name me
+claude --dangerously-load-development-channels server:stream0-channel
+```
+
+### 4. Try it
+
+In your Claude Code session, tell it to talk to the other agent:
 
 ```
-You: ask bob to argue why Codex is better than Claude Code.
+You: ask agent-b to argue why Codex is better than Claude Code.
      then tell me why you disagree.
 ```
 
-### Python
+Your agent sends the question to agent-b through Stream0, gets its argument back, and then gives you its own counterargument. Two AI agents, debating through Stream0, and you just asked one question.
 
-Use the SDK to poll and send messages programmatically:
+## Other integrations
+
+### Python
 
 ```python
 from stream0 import Agent
@@ -121,7 +76,7 @@ agent = Agent("my-agent", url="http://localhost:8080")
 agent.register()
 
 # Send a task
-agent.send("bob", thread_id="task-1", msg_type="request",
+agent.send("agent-b", thread_id="task-1", msg_type="request",
            content={"task": "Review this code"})
 
 # Wait for response
@@ -131,6 +86,22 @@ while True:
         print(msg["content"])
         agent.ack(msg["id"])
         break
+```
+
+### curl / any HTTP client
+
+```bash
+# Register
+curl -X POST http://localhost:8080/agents -H "Content-Type: application/json" \
+  -d '{"id": "my-agent", "description": "My agent"}'
+
+# Send a task
+curl -X POST http://localhost:8080/agents/agent-b/inbox \
+  -H "Content-Type: application/json" \
+  -d '{"thread_id":"task-1","from":"my-agent","type":"request","content":{"task":"..."}}'
+
+# Poll for response
+curl "http://localhost:8080/agents/my-agent/inbox?status=unread&thread_id=task-1&timeout=30"
 ```
 
 ## Message protocol
@@ -148,10 +119,10 @@ Each message has a `thread_id` (groups messages into a conversation) and a `type
 A typical exchange on one thread:
 
 ```
-alice → bob:    request  "Review this diff"
-bob   → alice:  question "Is the timeout change intentional?"
-alice → bob:    answer   "Yes, increased to 30s for slow networks"
-bob   → alice:  done     "LGTM with two style suggestions: ..."
+me      → agent-b:  request  "Review this diff"
+agent-b → me:       question "Is the timeout change intentional?"
+me      → agent-b:  answer   "Yes, increased to 30s for slow networks"
+agent-b → me:       done     "LGTM with two style suggestions: ..."
 ```
 
 ## API
