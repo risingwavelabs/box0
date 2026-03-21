@@ -523,31 +523,10 @@ async fn cmd_init_claude(name: &str, description: &str, url: &str) {
         }
     });
 
-    if mcp_file.exists() {
-        let content = std::fs::read_to_string(mcp_file).unwrap_or_default();
-        if content.contains("stream0-channel") {
-            println!("stream0-channel already configured in .mcp.json");
-        } else {
-            eprintln!("Warning: .mcp.json already exists. Add this to your mcpServers:");
-            eprintln!();
-            let inner = serde_json::json!({
-                "command": "npx",
-                "args": ["stream0-channel"],
-                "env": {
-                    "STREAM0_URL": url,
-                    "STREAM0_API_KEY": api_key,
-                    "STREAM0_AGENT_ID": name,
-                    "STREAM0_AGENT_TOKEN": agent_token
-                }
-            });
-            eprintln!("  \"stream0-channel\": {}", serde_json::to_string_pretty(&inner).unwrap());
-            eprintln!();
-        }
-    } else {
-        std::fs::write(mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap())
-            .expect("failed to write .mcp.json");
-        println!("Wrote .mcp.json");
-    }
+    // Always write .mcp.json to ensure token is current
+    std::fs::write(mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap())
+        .expect("failed to write .mcp.json");
+    println!("Wrote .mcp.json");
 
     println!();
     println!("Now run:");

@@ -353,7 +353,7 @@ await mcp.connect(new StdioServerTransport());
 
 // Register agent on Stream0 (group-auth) and get agent token
 const regResult = await stream0Post("/agents", { id: AGENT_ID });
-if (regResult?.agent_token && !agentToken) {
+if (regResult?.agent_token) {
   agentToken = regResult.agent_token;
 }
 console.error(`[stream0-channel] Registered as ${AGENT_ID}, polling inbox...`);
