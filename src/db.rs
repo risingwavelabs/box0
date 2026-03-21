@@ -12,27 +12,6 @@ pub struct Database {
 // --- Models ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Topic {
-    pub id: i64,
-    pub name: String,
-    pub retention_days: i32,
-    pub created_at: DateTime<Utc>,
-    pub message_count: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub id: String,
-    #[serde(skip_serializing)]
-    pub topic_id: i64,
-    pub offset: i64,
-    pub payload: serde_json::Value,
-    pub headers: serde_json::Map<String, serde_json::Value>,
-    pub timestamp: DateTime<Utc>,
-    pub delivery_count: i32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -45,6 +24,9 @@ pub struct Agent {
     pub last_seen: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webhook: Option<String>,
+    /// Only included in registration response, never in list/get
+    #[serde(skip_serializing)]
+    pub agent_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,14 +41,6 @@ pub struct InboxMessage {
     pub msg_type: String,
     pub content: Option<serde_json::Value>,
     pub status: String,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Reply {
-    pub correlation_id: String,
-    pub payload: serde_json::Value,
-    pub headers: serde_json::Map<String, serde_json::Value>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -89,84 +63,28 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(
             "
-            CREATE TABLE IF NOT EXISTS topics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE NOT NULL,
-                retention_days INTEGER DEFAULT 7,
-                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS messages (
-                id TEXT PRIMARY KEY,
-                topic_id INTEGER NOT NULL,
-                offset INTEGER NOT NULL,
-                payload TEXT NOT NULL,
-                headers TEXT NOT NULL,
-                timestamp TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-                delivery_count INTEGER DEFAULT 0,
-                FOREIGN KEY (topic_id) REFERENCES topics(id),
-                UNIQUE(topic_id, offset)
-            );
-
-            CREATE TABLE IF NOT EXISTS consumer_groups (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                topic_id INTEGER NOT NULL,
-                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-                FOREIGN KEY (topic_id) REFERENCES topics(id),
-                UNIQUE(name, topic_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS leases (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message_id TEXT NOT NULL,
-                consumer_group TEXT NOT NULL,
-                consumer_id TEXT NOT NULL,
-                acquired_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-                expires_at TEXT NOT NULL,
-                delivery_count INTEGER DEFAULT 1,
-                FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
-                UNIQUE(message_id, consumer_group)
-            );
-
-            CREATE TABLE IF NOT EXISTS offsets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                consumer_group TEXT NOT NULL,
-                topic_id INTEGER NOT NULL,
-                last_offset INTEGER DEFAULT 0,
-                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-                FOREIGN KEY (topic_id) REFERENCES topics(id),
-                UNIQUE(consumer_group, topic_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS replies (
-                correlation_id TEXT PRIMARY KEY,
-                payload TEXT NOT NULL,
-                headers TEXT NOT NULL,
-                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-            );
-
             CREATE TABLE IF NOT EXISTS agents (
-                tenant TEXT NOT NULL DEFAULT 'default',
+                group_id TEXT NOT NULL DEFAULT 'default',
                 id TEXT NOT NULL,
                 description TEXT,
+                agent_token TEXT,
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 last_seen TEXT,
                 webhook TEXT,
-                PRIMARY KEY (tenant, id)
+                PRIMARY KEY (group_id, id)
             );
 
             CREATE TABLE IF NOT EXISTS agent_aliases (
-                tenant TEXT NOT NULL DEFAULT 'default',
+                group_id TEXT NOT NULL DEFAULT 'default',
                 alias TEXT NOT NULL,
                 agent_id TEXT NOT NULL,
-                PRIMARY KEY (tenant, alias),
-                FOREIGN KEY (tenant, agent_id) REFERENCES agents(tenant, id) ON DELETE CASCADE
+                PRIMARY KEY (group_id, alias),
+                FOREIGN KEY (group_id, agent_id) REFERENCES agents(group_id, id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS inbox_messages (
                 id TEXT PRIMARY KEY,
-                tenant TEXT NOT NULL DEFAULT 'default',
+                group_id TEXT NOT NULL DEFAULT 'default',
                 thread_id TEXT NOT NULL,
                 from_agent TEXT NOT NULL,
                 to_agent TEXT NOT NULL,
@@ -176,23 +94,12 @@ impl Database {
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
 
-            CREATE INDEX IF NOT EXISTS idx_messages_topic_offset ON messages(topic_id, offset);
-            CREATE INDEX IF NOT EXISTS idx_leases_expires ON leases(expires_at);
-            CREATE INDEX IF NOT EXISTS idx_leases_group ON leases(consumer_group);
-            CREATE INDEX IF NOT EXISTS idx_replies_created ON replies(created_at);
-            CREATE INDEX IF NOT EXISTS idx_inbox_tenant_to_status ON inbox_messages(tenant, to_agent, status);
-            CREATE INDEX IF NOT EXISTS idx_inbox_tenant_thread ON inbox_messages(tenant, thread_id);
-            CREATE INDEX IF NOT EXISTS idx_inbox_tenant_to_thread ON inbox_messages(tenant, to_agent, thread_id);
+            CREATE INDEX IF NOT EXISTS idx_inbox_group_to_status ON inbox_messages(group_id, to_agent, status);
+            CREATE INDEX IF NOT EXISTS idx_inbox_group_thread ON inbox_messages(group_id, thread_id);
+            CREATE INDEX IF NOT EXISTS idx_inbox_group_to_thread ON inbox_messages(group_id, to_agent, thread_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_token ON agents(agent_token);
             ",
         )?;
-
-        // Migration: add description column to agents if it doesn't exist
-        let has_description: bool = conn
-            .prepare("SELECT description FROM agents LIMIT 0")
-            .is_ok();
-        if !has_description {
-            conn.execute_batch("ALTER TABLE agents ADD COLUMN description TEXT;")?;
-        }
 
         Ok(())
     }
@@ -211,304 +118,15 @@ impl Database {
             .unwrap_or_else(|_| Utc::now())
     }
 
-    // --- Topics ---
+    // --- Agents ---
 
-    pub fn create_topic(&self, name: &str, retention_days: i32) -> Result<Topic> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT OR IGNORE INTO topics (name, retention_days) VALUES (?1, ?2)",
-            params![name, retention_days],
-        )?;
-        self.get_topic_inner(&conn, name)?
-            .ok_or_else(|| anyhow::anyhow!("topic not found after creation"))
-    }
-
-    pub fn get_topic(&self, name: &str) -> Result<Option<Topic>> {
-        let conn = self.conn.lock().unwrap();
-        self.get_topic_inner(&conn, name)
-    }
-
-    fn get_topic_inner(&self, conn: &Connection, name: &str) -> Result<Option<Topic>> {
-        conn.query_row(
-            "SELECT t.id, t.name, t.retention_days, t.created_at, COUNT(m.id) as message_count
-             FROM topics t LEFT JOIN messages m ON t.id = m.topic_id
-             WHERE t.name = ?1 GROUP BY t.id",
-            params![name],
-            |row| {
-                let ts: String = row.get(3)?;
-                Ok(Topic {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    retention_days: row.get(2)?,
-                    created_at: Self::parse_ts(&ts),
-                    message_count: row.get(4)?,
-                })
-            },
-        )
-        .optional()
-        .map_err(Into::into)
-    }
-
-    pub fn list_topics(&self) -> Result<Vec<Topic>> {
+    pub fn list_agents(&self, group: &str) -> Result<Vec<Agent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT t.id, t.name, t.retention_days, t.created_at, COUNT(m.id)
-             FROM topics t LEFT JOIN messages m ON t.id = m.topic_id
-             GROUP BY t.id ORDER BY t.name",
-        )?;
-        let topics = stmt
-            .query_map([], |row| {
-                let ts: String = row.get(3)?;
-                Ok(Topic {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    retention_days: row.get(2)?,
-                    created_at: Self::parse_ts(&ts),
-                    message_count: row.get(4)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(topics)
-    }
-
-    // --- Messages ---
-
-    pub fn publish_message(
-        &self,
-        topic_id: i64,
-        payload: &serde_json::Value,
-        headers: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<Message> {
-        let conn = self.conn.lock().unwrap();
-        let msg_id = format!("msg-{}", &Uuid::new_v4().to_string()[..16]);
-        let payload_str = serde_json::to_string(payload)?;
-        let headers_str = serde_json::to_string(headers)?;
-
-        let tx = conn.unchecked_transaction()?;
-        let offset: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(offset), 0) + 1 FROM messages WHERE topic_id = ?1",
-            params![topic_id],
-            |row| row.get(0),
-        )?;
-
-        tx.execute(
-            "INSERT INTO messages (id, topic_id, offset, payload, headers) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![msg_id, topic_id, offset, payload_str, headers_str],
-        )?;
-        tx.commit()?;
-
-        let ts: String = conn.query_row(
-            "SELECT timestamp FROM messages WHERE id = ?1",
-            params![msg_id],
-            |row| row.get(0),
-        )?;
-
-        Ok(Message {
-            id: msg_id,
-            topic_id,
-            offset,
-            payload: payload.clone(),
-            headers: headers.clone(),
-            timestamp: Self::parse_ts(&ts),
-            delivery_count: 0,
-        })
-    }
-
-    pub fn get_message(&self, message_id: &str) -> Result<Option<Message>> {
-        let conn = self.conn.lock().unwrap();
-        conn.query_row(
-            "SELECT id, topic_id, offset, payload, headers, timestamp, delivery_count FROM messages WHERE id = ?1",
-            params![message_id],
-            |row| {
-                let payload_str: String = row.get(3)?;
-                let headers_str: String = row.get(4)?;
-                let ts: String = row.get(5)?;
-                Ok(Message {
-                    id: row.get(0)?,
-                    topic_id: row.get(1)?,
-                    offset: row.get(2)?,
-                    payload: serde_json::from_str(&payload_str).unwrap_or_default(),
-                    headers: serde_json::from_str(&headers_str).unwrap_or_default(),
-                    timestamp: Self::parse_ts(&ts),
-                    delivery_count: row.get(6)?,
-                })
-            },
-        )
-        .optional()
-        .map_err(Into::into)
-    }
-
-    pub fn claim_messages(
-        &self,
-        topic_id: i64,
-        consumer_group: &str,
-        consumer_id: &str,
-        max_messages: i32,
-        visibility_timeout_secs: i32,
-    ) -> Result<Vec<Message>> {
-        let conn = self.conn.lock().unwrap();
-        let now = Utc::now();
-        let expires_at = now + chrono::Duration::seconds(visibility_timeout_secs as i64);
-        let now_str = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let expires_str = expires_at.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-
-        let tx = conn.unchecked_transaction()?;
-
-        let last_offset: i64 = tx
-            .query_row(
-                "SELECT last_offset FROM offsets WHERE consumer_group = ?1 AND topic_id = ?2",
-                params![consumer_group, topic_id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-
-        let messages: Vec<Message> = {
-            let mut stmt = tx.prepare(
-                "SELECT m.id, m.topic_id, m.offset, m.payload, m.headers, m.timestamp, m.delivery_count
-                 FROM messages m
-                 WHERE m.topic_id = ?1 AND m.offset > ?2
-                 AND NOT EXISTS (
-                    SELECT 1 FROM leases l WHERE l.message_id = m.id
-                    AND l.consumer_group = ?3 AND l.expires_at > ?4
-                 )
-                 ORDER BY m.offset LIMIT ?5",
-            )?;
-
-            stmt.query_map(
-                params![topic_id, last_offset, consumer_group, now_str, max_messages],
-                |row| {
-                    let payload_str: String = row.get(3)?;
-                    let headers_str: String = row.get(4)?;
-                    let ts: String = row.get(5)?;
-                    Ok(Message {
-                        id: row.get(0)?,
-                        topic_id: row.get(1)?,
-                        offset: row.get(2)?,
-                        payload: serde_json::from_str(&payload_str).unwrap_or_default(),
-                        headers: serde_json::from_str(&headers_str).unwrap_or_default(),
-                        timestamp: Database::parse_ts(&ts),
-                        delivery_count: row.get(6)?,
-                    })
-                },
-            )?
-            .collect::<std::result::Result<Vec<_>, _>>()?
-        };
-
-        for msg in &messages {
-            tx.execute(
-                "INSERT INTO leases (message_id, consumer_group, consumer_id, expires_at, delivery_count)
-                 VALUES (?1, ?2, ?3, ?4, 1)
-                 ON CONFLICT(message_id, consumer_group) DO UPDATE SET
-                    consumer_id = excluded.consumer_id,
-                    expires_at = excluded.expires_at,
-                    delivery_count = leases.delivery_count + 1",
-                params![msg.id, consumer_group, consumer_id, expires_str],
-            )?;
-            tx.execute(
-                "UPDATE messages SET delivery_count = delivery_count + 1 WHERE id = ?1",
-                params![msg.id],
-            )?;
-        }
-
-        tx.commit()?;
-
-        // Re-read delivery counts
-        let mut result = messages;
-        for msg in &mut result {
-            msg.delivery_count += 1;
-        }
-        Ok(result)
-    }
-
-    pub fn acknowledge_message(&self, message_id: &str, consumer_group: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let tx = conn.unchecked_transaction()?;
-
-        let deleted = tx.execute(
-            "DELETE FROM leases WHERE message_id = ?1 AND consumer_group = ?2",
-            params![message_id, consumer_group],
-        )?;
-
-        if deleted == 0 {
-            anyhow::bail!("message not found or not leased by this group");
-        }
-
-        let (topic_id, offset): (i64, i64) = tx.query_row(
-            "SELECT topic_id, offset FROM messages WHERE id = ?1",
-            params![message_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-
-        tx.execute(
-            "INSERT INTO offsets (consumer_group, topic_id, last_offset)
-             VALUES (?1, ?2, ?3)
-             ON CONFLICT(consumer_group, topic_id) DO UPDATE SET
-                last_offset = MAX(last_offset, excluded.last_offset),
-                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
-            params![consumer_group, topic_id, offset],
-        )?;
-
-        tx.commit()?;
-        Ok(())
-    }
-
-    // --- Request-Reply ---
-
-    pub fn insert_reply(
-        &self,
-        correlation_id: &str,
-        payload: &serde_json::Value,
-        headers: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let payload_str = serde_json::to_string(payload)?;
-        let headers_str = serde_json::to_string(headers)?;
-        conn.execute(
-            "INSERT OR REPLACE INTO replies (correlation_id, payload, headers) VALUES (?1, ?2, ?3)",
-            params![correlation_id, payload_str, headers_str],
-        )?;
-        Ok(())
-    }
-
-    pub fn get_reply(&self, correlation_id: &str) -> Result<Option<Reply>> {
-        let conn = self.conn.lock().unwrap();
-        conn.query_row(
-            "SELECT correlation_id, payload, headers, created_at FROM replies WHERE correlation_id = ?1",
-            params![correlation_id],
-            |row| {
-                let payload_str: String = row.get(1)?;
-                let headers_str: String = row.get(2)?;
-                let ts: String = row.get(3)?;
-                Ok(Reply {
-                    correlation_id: row.get(0)?,
-                    payload: serde_json::from_str(&payload_str).unwrap_or_default(),
-                    headers: serde_json::from_str(&headers_str).unwrap_or_default(),
-                    created_at: Database::parse_ts(&ts),
-                })
-            },
-        )
-        .optional()
-        .map_err(Into::into)
-    }
-
-    pub fn delete_reply(&self, correlation_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "DELETE FROM replies WHERE correlation_id = ?1",
-            params![correlation_id],
-        )?;
-        Ok(())
-    }
-
-    // --- Agents (Inbox Model) ---
-
-    pub fn list_agents(&self, tenant: &str) -> Result<Vec<Agent>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, description, created_at, last_seen, webhook FROM agents WHERE tenant = ?1 ORDER BY created_at ASC",
+            "SELECT id, description, created_at, last_seen, webhook FROM agents WHERE group_id = ?1 ORDER BY created_at ASC",
         )?;
         let agents: Vec<Agent> = stmt
-            .query_map(params![tenant], |row| {
+            .query_map(params![group], |row| {
                 let id: String = row.get(0)?;
                 let desc: Option<String> = row.get(1)?;
                 let ts: String = row.get(2)?;
@@ -519,7 +137,7 @@ impl Database {
             .collect::<std::result::Result<Vec<_>, _>>()?
             .into_iter()
             .map(|(id, desc, ts, ls, wh)| {
-                let aliases = self.get_aliases_inner(&conn, tenant, &id);
+                let aliases = self.get_aliases_inner(&conn, group, &id);
                 Agent {
                     id,
                     description: desc,
@@ -527,53 +145,59 @@ impl Database {
                     created_at: Database::parse_ts(&ts),
                     last_seen: ls.map(|s| Database::parse_ts(&s)),
                     webhook: wh,
+                    agent_token: None, // never expose in list
                 }
             })
             .collect();
         Ok(agents)
     }
 
-    pub fn register_agent(&self, tenant: &str, id: &str, aliases: Option<&[String]>, webhook: Option<&str>, description: Option<&str>) -> Result<Agent> {
+    pub fn register_agent(&self, group: &str, id: &str, aliases: Option<&[String]>, webhook: Option<&str>, description: Option<&str>) -> Result<Agent> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT OR IGNORE INTO agents (tenant, id) VALUES (?1, ?2)",
-            params![tenant, id],
+        let tx = conn.unchecked_transaction()?;
+
+        // Generate token for new agents, preserve existing token
+        let token = format!("atok-{}", Uuid::new_v4());
+
+        tx.execute(
+            "INSERT INTO agents (group_id, id, agent_token) VALUES (?1, ?2, ?3)
+             ON CONFLICT(group_id, id) DO NOTHING",
+            params![group, id, token],
         )?;
 
-        // Update description if provided
         if let Some(desc) = description {
-            conn.execute(
-                "UPDATE agents SET description = ?1 WHERE tenant = ?2 AND id = ?3",
-                params![desc, tenant, id],
+            tx.execute(
+                "UPDATE agents SET description = ?1 WHERE group_id = ?2 AND id = ?3",
+                params![desc, group, id],
             )?;
         }
 
-        // Update webhook if provided
         if let Some(wh) = webhook {
-            conn.execute(
-                "UPDATE agents SET webhook = ?1 WHERE tenant = ?2 AND id = ?3",
-                params![wh, tenant, id],
+            tx.execute(
+                "UPDATE agents SET webhook = ?1 WHERE group_id = ?2 AND id = ?3",
+                params![wh, group, id],
             )?;
         }
 
-        // Update aliases if provided
         if let Some(alias_list) = aliases {
-            conn.execute("DELETE FROM agent_aliases WHERE tenant = ?1 AND agent_id = ?2", params![tenant, id])?;
+            tx.execute("DELETE FROM agent_aliases WHERE group_id = ?1 AND agent_id = ?2", params![group, id])?;
             for alias in alias_list {
-                conn.execute(
-                    "INSERT OR REPLACE INTO agent_aliases (tenant, alias, agent_id) VALUES (?1, ?2, ?3)",
-                    params![tenant, alias, id],
+                tx.execute(
+                    "INSERT OR REPLACE INTO agent_aliases (group_id, alias, agent_id) VALUES (?1, ?2, ?3)",
+                    params![group, alias, id],
                 )?;
             }
         }
 
-        let (desc, ts, ls, wh): (Option<String>, String, Option<String>, Option<String>) = conn.query_row(
-            "SELECT description, created_at, last_seen, webhook FROM agents WHERE tenant = ?1 AND id = ?2",
-            params![tenant, id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        let (desc, ts, ls, wh, stored_token): (Option<String>, String, Option<String>, Option<String>, Option<String>) = tx.query_row(
+            "SELECT description, created_at, last_seen, webhook, agent_token FROM agents WHERE group_id = ?1 AND id = ?2",
+            params![group, id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )?;
 
-        let agent_aliases = self.get_aliases_inner(&conn, tenant, id);
+        let agent_aliases = self.get_aliases_inner(&tx, group, id);
+
+        tx.commit()?;
 
         Ok(Agent {
             id: id.to_string(),
@@ -582,27 +206,27 @@ impl Database {
             created_at: Database::parse_ts(&ts),
             last_seen: ls.map(|s| Database::parse_ts(&s)),
             webhook: wh,
+            agent_token: stored_token, // include in registration response
         })
     }
 
-    fn get_aliases_inner(&self, conn: &Connection, tenant: &str, agent_id: &str) -> Vec<String> {
+    fn get_aliases_inner(&self, conn: &Connection, group: &str, agent_id: &str) -> Vec<String> {
         let mut stmt = conn
-            .prepare("SELECT alias FROM agent_aliases WHERE tenant = ?1 AND agent_id = ?2")
+            .prepare("SELECT alias FROM agent_aliases WHERE group_id = ?1 AND agent_id = ?2")
             .unwrap();
-        stmt.query_map(params![tenant, agent_id], |row| row.get(0))
+        stmt.query_map(params![group, agent_id], |row| row.get(0))
             .unwrap()
             .filter_map(|r| r.ok())
             .collect()
     }
 
     /// Resolve an agent ID or alias to the canonical agent ID
-    pub fn resolve_agent(&self, tenant: &str, id_or_alias: &str) -> Result<Option<String>> {
+    pub fn resolve_agent(&self, group: &str, id_or_alias: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
-        // Check direct ID first
         let exists: bool = conn
             .query_row(
-                "SELECT COUNT(*) FROM agents WHERE tenant = ?1 AND id = ?2",
-                params![tenant, id_or_alias],
+                "SELECT COUNT(*) FROM agents WHERE group_id = ?1 AND id = ?2",
+                params![group, id_or_alias],
                 |row| row.get::<_, i64>(0),
             )
             .map(|c| c > 0)?;
@@ -611,21 +235,32 @@ impl Database {
             return Ok(Some(id_or_alias.to_string()));
         }
 
-        // Check aliases
         conn.query_row(
-            "SELECT agent_id FROM agent_aliases WHERE tenant = ?1 AND alias = ?2",
-            params![tenant, id_or_alias],
+            "SELECT agent_id FROM agent_aliases WHERE group_id = ?1 AND alias = ?2",
+            params![group, id_or_alias],
             |row| row.get::<_, String>(0),
         )
         .optional()
         .map_err(Into::into)
     }
 
-    pub fn get_agent(&self, tenant: &str, id: &str) -> Result<Option<Agent>> {
+    /// Resolve an agent token to (group, agent_id)
+    pub fn resolve_agent_by_token(&self, token: &str) -> Result<Option<(String, String)>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, description, created_at, last_seen, webhook FROM agents WHERE tenant = ?1 AND id = ?2",
-            params![tenant, id],
+            "SELECT group_id, id FROM agents WHERE agent_token = ?1",
+            params![token],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn get_agent(&self, group: &str, id: &str) -> Result<Option<Agent>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, description, created_at, last_seen, webhook FROM agents WHERE group_id = ?1 AND id = ?2",
+            params![group, id],
             |row| {
                 let id: String = row.get(0)?;
                 let desc: Option<String> = row.get(1)?;
@@ -637,7 +272,7 @@ impl Database {
         )
         .optional()?
         .map(|(id, desc, ts, ls, wh)| {
-            let aliases = self.get_aliases_inner(&conn, tenant, &id);
+            let aliases = self.get_aliases_inner(&conn, group, &id);
             Ok(Agent {
                 id,
                 description: desc,
@@ -645,16 +280,17 @@ impl Database {
                 created_at: Database::parse_ts(&ts),
                 last_seen: ls.map(|s| Database::parse_ts(&s)),
                 webhook: wh,
+                agent_token: None, // never expose in get
             })
         })
         .transpose()
     }
 
-    pub fn get_agent_webhook(&self, tenant: &str, agent_id: &str) -> Result<Option<String>> {
+    pub fn get_agent_webhook(&self, group: &str, agent_id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT webhook FROM agents WHERE tenant = ?1 AND id = ?2",
-            params![tenant, agent_id],
+            "SELECT webhook FROM agents WHERE group_id = ?1 AND id = ?2",
+            params![group, agent_id],
             |row| row.get::<_, Option<String>>(0),
         )
         .optional()
@@ -662,28 +298,30 @@ impl Database {
         .map_err(Into::into)
     }
 
-    pub fn update_last_seen(&self, tenant: &str, agent_id: &str) -> Result<()> {
+    pub fn update_last_seen(&self, group: &str, agent_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE agents SET last_seen = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE tenant = ?1 AND id = ?2",
-            params![tenant, agent_id],
+            "UPDATE agents SET last_seen = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE group_id = ?1 AND id = ?2",
+            params![group, agent_id],
         )?;
         Ok(())
     }
 
-    pub fn delete_agent(&self, tenant: &str, id: &str) -> Result<()> {
+    pub fn delete_agent(&self, group: &str, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM agent_aliases WHERE tenant = ?1 AND agent_id = ?2", params![tenant, id])?;
-        let deleted = conn.execute("DELETE FROM agents WHERE tenant = ?1 AND id = ?2", params![tenant, id])?;
+        conn.execute("DELETE FROM agent_aliases WHERE group_id = ?1 AND agent_id = ?2", params![group, id])?;
+        let deleted = conn.execute("DELETE FROM agents WHERE group_id = ?1 AND id = ?2", params![group, id])?;
         if deleted == 0 {
             anyhow::bail!("agent not found");
         }
         Ok(())
     }
 
+    // --- Inbox ---
+
     pub fn send_inbox_message(
         &self,
-        tenant: &str,
+        group: &str,
         thread_id: &str,
         from: &str,
         to: &str,
@@ -695,8 +333,8 @@ impl Database {
         let content_str = content.map(|c| serde_json::to_string(c).unwrap_or_default());
 
         conn.execute(
-            "INSERT INTO inbox_messages (id, tenant, thread_id, from_agent, to_agent, type, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![msg_id, tenant, thread_id, from, to, msg_type, content_str],
+            "INSERT INTO inbox_messages (id, group_id, thread_id, from_agent, to_agent, type, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![msg_id, group, thread_id, from, to, msg_type, content_str],
         )?;
 
         let ts: String = conn.query_row(
@@ -719,17 +357,17 @@ impl Database {
 
     pub fn get_inbox_messages(
         &self,
-        tenant: &str,
+        group: &str,
         agent_id: &str,
         status: Option<&str>,
         thread_id: Option<&str>,
     ) -> Result<Vec<InboxMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut query =
-            "SELECT id, thread_id, from_agent, to_agent, type, content, status, created_at FROM inbox_messages WHERE tenant = ?1 AND to_agent = ?2"
+            "SELECT id, thread_id, from_agent, to_agent, type, content, status, created_at FROM inbox_messages WHERE group_id = ?1 AND to_agent = ?2"
                 .to_string();
         let mut param_idx = 3;
-        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(tenant.to_string()), Box::new(agent_id.to_string())];
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(group.to_string()), Box::new(agent_id.to_string())];
 
         if let Some(s) = status {
             query += &format!(" AND status = ?{}", param_idx);
@@ -764,11 +402,11 @@ impl Database {
         Ok(messages)
     }
 
-    pub fn ack_inbox_message(&self, tenant: &str, message_id: &str) -> Result<()> {
+    pub fn ack_inbox_message(&self, group: &str, message_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let updated = conn.execute(
-            "UPDATE inbox_messages SET status = 'acked' WHERE id = ?1 AND tenant = ?2 AND status = 'unread'",
-            params![message_id, tenant],
+            "UPDATE inbox_messages SET status = 'acked' WHERE id = ?1 AND group_id = ?2 AND status = 'unread'",
+            params![message_id, group],
         )?;
         if updated == 0 {
             anyhow::bail!("message not found or already acked");
@@ -776,14 +414,14 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_thread_messages(&self, tenant: &str, thread_id: &str) -> Result<Vec<InboxMessage>> {
+    pub fn get_thread_messages(&self, group: &str, thread_id: &str) -> Result<Vec<InboxMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, thread_id, from_agent, to_agent, type, content, status, created_at
-             FROM inbox_messages WHERE tenant = ?1 AND thread_id = ?2 ORDER BY created_at ASC",
+             FROM inbox_messages WHERE group_id = ?1 AND thread_id = ?2 ORDER BY created_at ASC",
         )?;
         let messages = stmt
-            .query_map(params![tenant, thread_id], |row| {
+            .query_map(params![group, thread_id], |row| {
                 let content_str: Option<String> = row.get(5)?;
                 let ts: String = row.get(7)?;
                 Ok(InboxMessage {

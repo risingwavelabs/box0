@@ -97,6 +97,17 @@ You: ask worker to argue why Codex is better than Claude Code.
 
 Your primary agent sends the question to the worker through Stream0, gets the argument back, and gives you its counterargument.
 
+## Authentication
+
+Stream0 uses two-layer authentication:
+
+| Header | Purpose | Used by |
+|--------|---------|---------|
+| `X-API-Key` | Group-level operations | Register, list, delete agents; view threads |
+| `X-Agent-Token` | Agent-level operations | Send, receive, acknowledge messages |
+
+When you register an agent with `X-API-Key`, the response includes an `agent_token`. Use that token for all subsequent message operations.
+
 ## Message protocol
 
 Each message has a `thread_id` (groups messages into a conversation) and a `type`:
@@ -120,32 +131,33 @@ worker  → primary:  done     "LGTM with two style suggestions: ..."
 
 ## API
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/agents` | Register an agent (`id`, `description`, `aliases`, `webhook`) |
-| `GET` | `/agents` | List all agents |
-| `POST` | `/agents/{id}/inbox` | Send a message (`thread_id`, `from`, `type`, `content`) |
-| `GET` | `/agents/{id}/inbox` | Poll inbox (`?status=unread&thread_id=X&timeout=30`) |
-| `POST` | `/inbox/messages/{id}/ack` | Acknowledge a message |
-| `GET` | `/threads/{id}/messages` | Get full thread history |
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/agents` | `X-API-Key` | Register an agent (`id`, `description`, `aliases`, `webhook`). Returns `agent_token`. |
+| `GET` | `/agents` | `X-API-Key` | List all agents |
+| `DELETE` | `/agents/{id}` | `X-API-Key` | Delete an agent |
+| `GET` | `/threads/{id}/messages` | `X-API-Key` | Get full thread history |
+| `POST` | `/agents/{id}/inbox` | `X-Agent-Token` | Send a message (`thread_id`, `type`, `content`) |
+| `GET` | `/agents/{id}/inbox` | `X-Agent-Token` | Poll inbox (`?status=unread&thread_id=X&timeout=30`) |
+| `POST` | `/inbox/messages/{id}/ack` | `X-Agent-Token` | Acknowledge a message |
 
-## Other runtimes
+## Other integrations
 
 ### Python
 
 ```python
 from stream0 import Agent
 
-agent = Agent("my-agent", url="http://localhost:8080")
-agent.register()
+agent = Agent("my-agent", url="http://localhost:8080", api_key="your-key")
+result = agent.register()  # returns agent_token, stored automatically
 
-# Send a task
+# Send a task (sender identity comes from agent token)
 agent.send("worker", thread_id="task-1", msg_type="request",
            content={"task": "Review this code"})
 
 # Wait for response
 while True:
-    messages = agent.receive(status="unread", thread_id="task-1", timeout=30)
+    messages = agent.receive(thread_id="task-1", timeout=30)
     for msg in messages:
         print(msg["content"])
         agent.ack(msg["id"])
@@ -155,17 +167,20 @@ while True:
 ### curl / any HTTP client
 
 ```bash
-# Register
-curl -X POST http://localhost:8080/agents -H "Content-Type: application/json" \
+# Register (returns agent_token)
+curl -X POST http://localhost:8080/agents \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
   -d '{"id": "my-agent", "description": "My agent"}'
+# Response: {"id":"my-agent","agent_token":"atok-abc123",...}
 
-# Send a task
+# Send a task (use agent token, no "from" field needed)
 curl -X POST http://localhost:8080/agents/worker/inbox \
-  -H "Content-Type: application/json" \
-  -d '{"thread_id":"task-1","from":"my-agent","type":"request","content":{"task":"..."}}'
+  -H "X-Agent-Token: atok-abc123" -H "Content-Type: application/json" \
+  -d '{"thread_id":"task-1","type":"request","content":{"task":"..."}}'
 
 # Poll for response
-curl "http://localhost:8080/agents/my-agent/inbox?status=unread&thread_id=task-1&timeout=30"
+curl -H "X-Agent-Token: atok-abc123" \
+  "http://localhost:8080/agents/my-agent/inbox?status=unread&thread_id=task-1&timeout=30"
 ```
 
 ## For AI agents
@@ -174,7 +189,7 @@ See [STREAM0_SKILL.md](STREAM0_SKILL.md) for a self-contained reference on how t
 
 ## Self-hosting
 
-See [SELF_HOSTING.md](SELF_HOSTING.md). Supports API key auth and multi-tenant isolation.
+See [SELF_HOSTING.md](SELF_HOSTING.md). Supports API key auth, agent tokens, and multi-group isolation.
 
 ## License
 

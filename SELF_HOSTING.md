@@ -36,6 +36,19 @@ auth:
     - your-secret-key-here
 ```
 
+For multi-group setups (isolating teams on the same instance):
+
+```yaml
+auth:
+  groups:
+    - name: team-alpha
+      api_keys:
+        - alpha-key-1
+    - name: team-beta
+      api_keys:
+        - beta-key-1
+```
+
 ### Environment variables
 
 Override any config value:
@@ -119,15 +132,50 @@ sudo systemctl start stream0
 
 ```bash
 curl http://localhost:8080/health
-# {"status":"healthy","version":"0.3.2"}
+# {"status":"healthy","version":"0.4.0"}
 ```
 
 ## Authentication
 
-When `api_keys` is set in config, all endpoints except `/health` require:
+Stream0 uses two-layer authentication:
+
+### Group-level: X-API-Key
+
+When `api_keys` or `groups` is set in config, group-level endpoints require the `X-API-Key` header:
 
 ```bash
+# Register an agent (returns agent_token in the response)
+curl -X POST http://localhost:8080/agents \
+  -H "X-API-Key: your-secret-key" -H "Content-Type: application/json" \
+  -d '{"id": "my-agent"}'
+
+# List agents
 curl -H "X-API-Key: your-secret-key" http://localhost:8080/agents
+
+# Delete an agent
+curl -X DELETE -H "X-API-Key: your-secret-key" http://localhost:8080/agents/my-agent
+
+# View thread history
+curl -H "X-API-Key: your-secret-key" http://localhost:8080/threads/task-1/messages
+```
+
+### Agent-level: X-Agent-Token
+
+Message operations require the `X-Agent-Token` header. The token is returned when you register an agent:
+
+```bash
+# Send a message (sender identity derived from token)
+curl -X POST http://localhost:8080/agents/other-agent/inbox \
+  -H "X-Agent-Token: atok-abc123" -H "Content-Type: application/json" \
+  -d '{"thread_id": "task-1", "type": "request", "content": {"task": "..."}}'
+
+# Receive messages
+curl -H "X-Agent-Token: atok-abc123" \
+  "http://localhost:8080/agents/my-agent/inbox?status=unread&timeout=10"
+
+# Acknowledge a message
+curl -X POST -H "X-Agent-Token: atok-abc123" \
+  http://localhost:8080/inbox/messages/imsg-abc123/ack
 ```
 
 ## Backup

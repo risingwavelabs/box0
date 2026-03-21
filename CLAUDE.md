@@ -4,7 +4,7 @@ This file is for Claude Code (or any AI agent) working on Stream0. Read this fir
 
 ## What is Stream0?
 
-An agent communication layer. Every agent gets an inbox. Agents send messages to each other's inboxes, grouped by `thread_id`. Supports multi-turn conversations (request → question → answer → done).
+An agent communication layer. Every agent gets an inbox. Agents send messages to each other's inboxes, grouped by `thread_id`. Supports multi-turn conversations (request -> question -> answer -> done).
 
 ## Project structure
 
@@ -30,44 +30,49 @@ cargo build --release
 ./target/release/stream0                              # default config
 ./target/release/stream0 --config stream0.yaml        # custom config
 
-# Test (Python SDK unit tests — 47 tests)
+# Test (Python SDK unit tests)
 cd sdk/python && pip install -e ".[dev]" && pytest tests/test_client.py -v
 
-# Integration tests (needs running server — 25 tests)
+# Integration tests (needs running server)
 STREAM0_URL=http://localhost:8080 pytest tests/test_integration.py -v
 ```
 
 ## Key APIs
 
-### Inbox API
+### Two-layer auth
 
-- `POST /agents` — register agent `{"id": "agent-name"}`
-- `POST /agents/{id}/inbox` — send message `{"thread_id", "from", "type", "content"}`
-- `GET /agents/{id}/inbox?status=unread&thread_id=X&timeout=10` — poll inbox
-- `POST /inbox/messages/{id}/ack` — mark as read
-- `GET /threads/{thread_id}/messages` — conversation history
+- `X-API-Key` header for group-level operations (register/list/delete agents, view threads)
+- `X-Agent-Token` header for agent-level operations (send/receive/ack messages)
+
+Registration returns an `agent_token` in the response. The server derives sender identity from the agent token, so no `from` field is needed when sending messages.
+
+### Endpoints
+
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| `POST /agents` | `X-API-Key` | Register agent `{"id": "agent-name"}`. Returns `agent_token`. |
+| `GET /agents` | `X-API-Key` | List all agents in this group |
+| `DELETE /agents/{id}` | `X-API-Key` | Delete an agent |
+| `POST /agents/{id}/inbox` | `X-Agent-Token` | Send message `{"thread_id", "type", "content"}` |
+| `GET /agents/{id}/inbox?status=unread&thread_id=X&timeout=10` | `X-Agent-Token` | Poll inbox |
+| `POST /inbox/messages/{id}/ack` | `X-Agent-Token` | Mark message as read |
+| `GET /threads/{thread_id}/messages` | `X-API-Key` | Conversation history |
 
 Message types: `request`, `question`, `answer`, `done`, `failed`, `message`
-
-### Legacy Topic API
-
-- `POST /topics` — create topic
-- `POST /topics/{name}/messages` — publish
-- `GET /topics/{name}/messages?group=X&timeout=5` — consume (long-polling)
-- `POST /messages/{id}/ack` — acknowledge
 
 ## Important technical details
 
 - **Language**: Rust (axum + rusqlite + serde + tokio)
 - **SQLite**: Uses `rusqlite` with `bundled` feature (compiles SQLite from source, no system dependency)
 - **Config loading**: YAML parsed with serde_yaml. Env vars override only when set.
-- **Auth**: API key via `X-API-Key` header. Constant-time comparison (`subtle` crate). Supports both flat `auth.api_keys` (all map to "default" tenant) and `auth.tenants` (per-tenant key scoping).
-- **Multi-tenancy**: Each API key maps to a tenant. Agents and messages are fully isolated between tenants. Two teams can use the same Stream0 instance without seeing each other's data.
-- **Long-polling**: Both topic consume and inbox endpoints support long-polling with `timeout` param.
-- **Timestamps**: Stored as ISO 8601 strings in SQLite, parsed with chrono. Fixed the epoch-zero bug from the Go version.
+- **Auth**: Two-layer. `X-API-Key` for group-level ops, `X-Agent-Token` for agent-level ops. Constant-time comparison (`subtle` crate). Supports both flat `auth.api_keys` (all map to "default" group) and `auth.groups` (per-group key scoping).
+- **Multi-group isolation**: Each API key maps to a group. Agents and messages are fully isolated between groups. Two teams can use the same Stream0 instance without seeing each other's data.
+- **Agent tokens**: Generated at registration time (`atok-` prefix). The server resolves the token to the agent's identity, so the `from` field is not in the send request body.
+- **Long-polling**: Inbox endpoints support long-polling with `timeout` param.
+- **Timestamps**: Stored as ISO 8601 strings in SQLite, parsed with chrono.
 - **Agent aliases**: The `agent_aliases` table maps alternate names to canonical agent IDs. Messages sent to an alias are delivered to the canonical inbox.
 - **Presence**: `last_seen` is updated on the agents row each time an agent polls their inbox.
-- **Webhooks**: Agents can register a `webhook` URL at registration time. On message delivery, Stream0 fires an async HTTP POST notification to the URL using reqwest with a 10-second timeout. Fire-and-forget — failures don't affect message storage.
+- **Webhooks**: Agents can register a `webhook` URL at registration time. On message delivery, Stream0 fires an async HTTP POST notification to the URL using reqwest with a 10-second timeout. Fire-and-forget -- failures don't affect message storage.
 
 ## Deployment
 
@@ -78,10 +83,10 @@ Message types: `request`, `question`, `answer`, `done`, `failed`, `message`
 
 ## Common tasks
 
-### Add a new inbox endpoint
+### Add a new endpoint
 
 1. Add handler function in `src/main.rs`
-2. Register route in the `Router` setup in `main()`
+2. Register route in the `Router` setup in `main()` -- choose the correct auth layer (`group_routes` for X-API-Key, `agent_routes` for X-Agent-Token)
 3. Add database method in `src/db.rs` if needed
 4. Update Python SDK in `sdk/python/stream0/client.py`
 5. Add Python tests in `sdk/python/tests/test_client.py`
@@ -108,15 +113,15 @@ sudo systemctl start stream0
 
 Every time you make major changes, develop new features, or do major refactors, you **must** update the relevant docs and push them to the GitHub repo in the same commit or immediately after. This includes:
 
-- **README.md** — if the API surface changes or new features are added
-- **CLAUDE.md** — if build steps, project structure, or technical details change
-- **STREAM0_SKILL.md** — if endpoints or usage patterns change (this is what other agents read)
-- **sdk/python/README.md** — if the Python SDK changes
-- **SELF_HOSTING.md** — if deployment steps change
+- **README.md** -- if the API surface changes or new features are added
+- **CLAUDE.md** -- if build steps, project structure, or technical details change
+- **STREAM0_SKILL.md** -- if endpoints or usage patterns change (this is what other agents read)
+- **sdk/python/README.md** -- if the Python SDK changes
+- **SELF_HOSTING.md** -- if deployment steps change
 
 Do not ship code without shipping docs.
 
 ## Do not
 
 - Do not commit API keys or secrets
-- Do not use Go — the project has been rewritten in Rust
+- Do not use Go -- the project has been rewritten in Rust

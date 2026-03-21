@@ -37,44 +37,42 @@ pub struct LogConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct TenantConfig {
+pub struct GroupConfig {
     pub name: String,
     pub api_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AuthConfig {
-    /// Simple flat API keys (backward compatible, all map to "default" tenant)
+    /// Simple flat API keys (all map to "default" group)
     #[serde(default)]
     pub api_keys: Vec<String>,
-    /// Tenant-scoped API keys
+    /// Group-scoped API keys
     #[serde(default)]
-    pub tenants: Vec<TenantConfig>,
+    pub groups: Vec<GroupConfig>,
 }
 
 impl AuthConfig {
-    /// Build a map of api_key -> tenant_name for fast lookup
+    /// Build a map of api_key -> group_name for fast lookup
     pub fn build_key_map(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
-        // Flat api_keys → "default" tenant
         for key in &self.api_keys {
             map.insert(key.clone(), "default".to_string());
         }
-        // Tenant-scoped keys
-        for tenant in &self.tenants {
-            for key in &tenant.api_keys {
-                map.insert(key.clone(), tenant.name.clone());
+        for group in &self.groups {
+            for key in &group.api_keys {
+                map.insert(key.clone(), group.name.clone());
             }
         }
         map
     }
 
     pub fn has_keys(&self) -> bool {
-        !self.api_keys.is_empty() || self.tenants.iter().any(|t| !t.api_keys.is_empty())
+        !self.api_keys.is_empty() || self.groups.iter().any(|g| !g.api_keys.is_empty())
     }
 
     pub fn total_keys(&self) -> usize {
-        self.api_keys.len() + self.tenants.iter().map(|t| t.api_keys.len()).sum::<usize>()
+        self.api_keys.len() + self.groups.iter().map(|g| g.api_keys.len()).sum::<usize>()
     }
 }
 

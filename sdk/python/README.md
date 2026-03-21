@@ -1,6 +1,6 @@
 # Stream0 Python SDK
 
-Python client for [Stream0](https://github.com/risingwavelabs/stream0) — the communication layer for AI agents.
+Python client for [Stream0](https://github.com/risingwavelabs/stream0) -- the communication layer for AI agents.
 
 ## Install
 
@@ -15,17 +15,17 @@ pip install -e .
 ```python
 from stream0 import Agent
 
-# Create and register an agent
-agent = Agent("my-agent", url="http://localhost:8080", api_key="optional-key")
+# Create and register an agent (register returns agent_token, stored automatically)
+agent = Agent("my-agent", url="http://localhost:8080", api_key="your-key")
 agent.register()
 
-# Send a message to another agent
+# Send a message to another agent (sender identity from agent token)
 agent.send("other-agent", thread_id="task-1", msg_type="request",
            content={"instruction": "do something"})
 
 # Read inbox
 messages = agent.receive()                    # all unread
-messages = agent.receive(thread_id="task-1")    # filter by task
+messages = agent.receive(thread_id="task-1")  # filter by task
 messages = agent.receive(timeout=10)          # long-poll up to 10s
 
 # Acknowledge a message
@@ -40,11 +40,11 @@ history = agent.history("task-1")
 ```python
 from stream0 import Agent
 
-main = Agent("main-agent", url="http://localhost:8080")
-worker = Agent("worker", url="http://localhost:8080")
+main = Agent("main-agent", url="http://localhost:8080", api_key="your-key")
+worker = Agent("worker", url="http://localhost:8080", api_key="your-key")
 
-main.register()
-worker.register()
+main.register()    # registers and stores agent_token
+worker.register()  # registers and stores agent_token
 
 # Main sends task
 main.send("worker", thread_id="t1", msg_type="request",
@@ -82,20 +82,26 @@ For direct API access without a fixed agent identity:
 ```python
 from stream0 import Stream0Client
 
-client = Stream0Client("http://localhost:8080", api_key="optional-key")
+client = Stream0Client("http://localhost:8080", api_key="your-key")
 
-# Inbox API
-client.register_agent("my-agent")
-client.send("target-agent", "task-1", "my-agent", "request", {"data": "hello"})
-messages = client.receive("my-agent", status="unread")
-client.ack_inbox(messages[0]["id"])
+# Register an agent (returns dict with agent_token)
+result = client.register_agent("my-agent")
+agent_token = result["agent_token"]
+
+# Create a new client with the agent token for message operations
+agent_client = Stream0Client("http://localhost:8080", api_key="your-key", agent_token=agent_token)
+
+# Send a message (sender identity from agent token, no from_agent needed)
+agent_client.send("target-agent", "task-1", "request", {"data": "hello"})
+
+# Receive messages
+messages = agent_client.receive("my-agent", status="unread")
+
+# Acknowledge
+agent_client.ack_inbox(messages[0]["id"])
+
+# Thread history (uses X-API-Key)
 history = client.get_thread_messages("task-1")
-
-# Legacy topic API
-client.create_topic("events")
-client.publish("events", {"action": "click"})
-messages = client.consume("events", "group1", timeout=5)
-client.ack(messages[0]["id"], "group1")
 ```
 
 ## Message types
@@ -114,14 +120,15 @@ client.ack(messages[0]["id"], "group1")
 ```python
 from stream0 import Agent, NotFoundError, AuthenticationError, TimeoutError
 
-agent = Agent("my-agent", url="http://localhost:8080")
+agent = Agent("my-agent", url="http://localhost:8080", api_key="your-key")
+agent.register()
 
 try:
     agent.send("ghost", thread_id="t1", msg_type="request")
 except NotFoundError:
     print("Agent not registered")
 except AuthenticationError:
-    print("Bad API key")
+    print("Bad API key or agent token")
 ```
 
 ## Testing

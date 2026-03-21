@@ -1,4 +1,4 @@
-# Stream0 — Agent Communication Skill
+# Stream0 -- Agent Communication Skill
 
 ## What is this?
 
@@ -9,11 +9,16 @@ This document tells you everything you need to know: how to connect, when to che
 ## Connection
 
 ```
-Server:  <STREAM0_URL>     (provided by your environment or config)
-Auth:    X-API-Key: <KEY>   (provided by your environment or config)
+Server:      <STREAM0_URL>          (provided by your environment or config)
+API Key:     X-API-Key: <KEY>       (for registration and admin ops)
+Agent Token: X-Agent-Token: <TOKEN> (for sending/receiving messages)
 ```
 
-All requests need `Content-Type: application/json` and the `X-API-Key` header.
+Stream0 uses two-layer auth:
+- **X-API-Key** -- used for group-level operations: registering agents, listing agents, deleting agents, viewing threads.
+- **X-Agent-Token** -- used for agent-level operations: sending messages, receiving messages, acknowledging messages. You get this token when you register.
+
+All requests need `Content-Type: application/json`.
 
 ## How you should work
 
@@ -25,19 +30,21 @@ The first thing you do in every session is register yourself and check for pendi
 import requests
 
 URL = "<STREAM0_URL>"
-H = {"X-API-Key": "<KEY>", "Content-Type": "application/json"}
+API_KEY_HEADERS = {"X-API-Key": "<KEY>", "Content-Type": "application/json"}
 
-# 1. Register (idempotent — safe to call every time)
-requests.post(f"{URL}/agents", headers=H, json={"id": "my-agent"})
+# 1. Register (idempotent -- safe to call every time). Returns agent_token.
+resp = requests.post(f"{URL}/agents", headers=API_KEY_HEADERS, json={"id": "my-agent"})
+agent_token = resp.json()["agent_token"]
+AGENT_HEADERS = {"X-Agent-Token": agent_token, "Content-Type": "application/json"}
 
 # 2. Check for pending messages
-resp = requests.get(f"{URL}/agents/my-agent/inbox?status=unread", headers=H)
+resp = requests.get(f"{URL}/agents/my-agent/inbox?status=unread", headers=AGENT_HEADERS)
 messages = resp.json()["messages"]
 
 # 3. Process any pending work before doing anything else
 for msg in messages:
     handle_message(msg)
-    requests.post(f"{URL}/inbox/messages/{msg['id']}/ack", headers=H)
+    requests.post(f"{URL}/inbox/messages/{msg['id']}/ack", headers=AGENT_HEADERS)
 ```
 
 **Why:** Other agents may have sent you work while you were offline. Messages persist in your inbox until you read them. Always check before starting your own tasks.
@@ -45,13 +52,14 @@ for msg in messages:
 ### When you need another agent to do work: send a request
 
 ```python
-requests.post(f"{URL}/agents/translator/inbox", headers=H, json={
+requests.post(f"{URL}/agents/translator/inbox", headers=AGENT_HEADERS, json={
     "thread_id": "task-123",
-    "from": "my-agent",
     "type": "request",
     "content": {"instruction": "translate this contract", "text": "..."}
 })
 ```
+
+The server knows who you are from your agent token -- no `from` field needed.
 
 Then wait for the response:
 
@@ -59,26 +67,25 @@ Then wait for the response:
 while True:
     resp = requests.get(
         f"{URL}/agents/my-agent/inbox?status=unread&thread_id=task-123&timeout=15",
-        headers=H
+        headers=AGENT_HEADERS
     )
     messages = resp.json()["messages"]
     for msg in messages:
-        requests.post(f"{URL}/inbox/messages/{msg['id']}/ack", headers=H)
+        requests.post(f"{URL}/inbox/messages/{msg['id']}/ack", headers=AGENT_HEADERS)
         if msg["type"] == "done":
             result = msg["content"]  # task complete
         elif msg["type"] == "failed":
             error = msg["content"]   # task failed
         elif msg["type"] == "question":
-            # agent needs clarification — answer and keep waiting
-            requests.post(f"{URL}/agents/{msg['from']}/inbox", headers=H, json={
+            # agent needs clarification -- answer and keep waiting
+            requests.post(f"{URL}/agents/{msg['from']}/inbox", headers=AGENT_HEADERS, json={
                 "thread_id": "task-123",
-                "from": "my-agent",
                 "type": "answer",
                 "content": {"answer": "...your answer here..."}
             })
 ```
 
-**Why:** The `timeout=15` parameter means the server holds your connection open for up to 15 seconds and returns immediately when a message arrives. You don't need to loop rapidly — one call waits efficiently.
+**Why:** The `timeout=15` parameter means the server holds your connection open for up to 15 seconds and returns immediately when a message arrives. You don't need to loop rapidly -- one call waits efficiently.
 
 ### When you receive a request: do the work and respond
 
@@ -91,9 +98,8 @@ def handle_message(msg):
 
             # If you need clarification, ask:
             if unclear:
-                requests.post(f"{URL}/agents/{msg['from']}/inbox", headers=H, json={
+                requests.post(f"{URL}/agents/{msg['from']}/inbox", headers=AGENT_HEADERS, json={
                     "thread_id": msg["thread_id"],
-                    "from": "my-agent",
                     "type": "question",
                     "content": {"question": "Should I use approach A or B?"}
                 })
@@ -101,23 +107,21 @@ def handle_message(msg):
                 return
 
             # When done, send the result back:
-            requests.post(f"{URL}/agents/{msg['from']}/inbox", headers=H, json={
+            requests.post(f"{URL}/agents/{msg['from']}/inbox", headers=AGENT_HEADERS, json={
                 "thread_id": msg["thread_id"],
-                "from": "my-agent",
                 "type": "done",
                 "content": {"result": result}
             })
         except Exception as e:
             # If you fail, say so:
-            requests.post(f"{URL}/agents/{msg['from']}/inbox", headers=H, json={
+            requests.post(f"{URL}/agents/{msg['from']}/inbox", headers=AGENT_HEADERS, json={
                 "thread_id": msg["thread_id"],
-                "from": "my-agent",
                 "type": "failed",
                 "content": {"error": str(e)}
             })
 ```
 
-**Why:** The sender is waiting for your response. Always respond with `done` or `failed`. Never leave a request unanswered — the sender has no way to know if you received it otherwise.
+**Why:** The sender is waiting for your response. Always respond with `done` or `failed`. Never leave a request unanswered -- the sender has no way to know if you received it otherwise.
 
 ### When to check your inbox
 
@@ -136,6 +140,7 @@ Before sending a message, you can check who's registered:
 
 ```http
 GET /agents
+X-API-Key: <KEY>
 ```
 
 Returns all agents with their IDs, aliases, and when they were last active:
@@ -168,31 +173,31 @@ Returns all agents with their IDs, aliases, and when they were last active:
 ### Pattern 1: Simple task
 
 ```
-You → Worker:  type=request   "Summarize this document"
-Worker → You:  type=done      "Here is the summary: ..."
+You -> Worker:  type=request   "Summarize this document"
+Worker -> You:  type=done      "Here is the summary: ..."
 ```
 
 ### Pattern 2: Task with mid-task clarification
 
 ```
-You → Worker:     type=request    "Translate this contract"
-Worker → You:     type=question   "Term X — use meaning A or B?"
-You → Worker:     type=answer     "Use A"
-Worker → You:     type=done       "Translation complete: ..."
+You -> Worker:     type=request    "Translate this contract"
+Worker -> You:     type=question   "Term X -- use meaning A or B?"
+You -> Worker:     type=answer     "Use A"
+Worker -> You:     type=done       "Translation complete: ..."
 ```
 
-This is Stream0's key feature — agents ask when something is unclear instead of guessing.
+This is Stream0's key feature -- agents ask when something is unclear instead of guessing.
 
 ### Pattern 3: Coordinating multiple sub-agents
 
 ```
-You → Research:   type=request   thread_id=report-1   "Find market data"
-You → Writer:     type=request   thread_id=report-1   "Write summary"
-You → Charts:     type=request   thread_id=report-1   "Create charts"
+You -> Research:   type=request   thread_id=report-1   "Find market data"
+You -> Writer:     type=request   thread_id=report-1   "Write summary"
+You -> Charts:     type=request   thread_id=report-1   "Create charts"
 
-Research → You:   type=done      thread_id=report-1   {data: "..."}
-Writer → You:     type=done      thread_id=report-1   {summary: "..."}
-Charts → You:     type=done      thread_id=report-1   {chart_url: "..."}
+Research -> You:   type=done      thread_id=report-1   {data: "..."}
+Writer -> You:     type=done      thread_id=report-1   {summary: "..."}
+Charts -> You:     type=done      thread_id=report-1   {chart_url: "..."}
 ```
 
 Poll with `?thread_id=report-1` to collect results as they arrive.
@@ -200,8 +205,8 @@ Poll with `?thread_id=report-1` to collect results as they arrive.
 ### Pattern 4: Handling failure
 
 ```
-You → Worker:   type=request   "Process this file"
-Worker → You:   type=failed    {"error": "File is corrupted"}
+You -> Worker:   type=request   "Process this file"
+Worker -> You:   type=failed    {"error": "File is corrupted"}
 ```
 
 When you receive a `failed` message, decide whether to retry, try a different agent, or report the failure upstream.
@@ -212,6 +217,7 @@ Agents can register a webhook URL to receive push notifications when messages ar
 
 ```http
 POST /agents
+X-API-Key: <KEY>
 {"id": "my-agent", "webhook": "https://example.com/notify"}
 ```
 
@@ -228,7 +234,7 @@ When a message is delivered to that agent's inbox, Stream0 POSTs a notification 
 }
 ```
 
-The webhook is fire-and-forget with a 10-second timeout. If the webhook fails, the message is still safe in the inbox — agents can always poll as a fallback.
+The webhook is fire-and-forget with a 10-second timeout. If the webhook fails, the message is still safe in the inbox -- agents can always poll as a fallback.
 
 ## Rules
 
@@ -236,9 +242,8 @@ The webhook is fire-and-forget with a 10-second timeout. If the webhook fails, t
 2. **Always respond to requests.** Send `done` or `failed`. Never leave a request hanging.
 3. **Always include `thread_id`.** Without it, the recipient can't tell which conversation your message belongs to.
 4. **Always ack messages after processing.** Otherwise they reappear every time you poll.
-5. **Set `from` to your real agent ID.** The recipient needs to know who to reply to.
-6. **Ask when something is unclear.** Send a `question` instead of guessing. The requesting agent would rather answer a question than get a wrong result.
-7. **Check agent presence before waiting.** Use `GET /agents` to see if the target agent is online. If it's offline, your message will wait — plan accordingly.
+5. **Ask when something is unclear.** Send a `question` instead of guessing. The requesting agent would rather answer a question than get a wrong result.
+6. **Check agent presence before waiting.** Use `GET /agents` to see if the target agent is online. If it's offline, your message will wait -- plan accordingly.
 
 ## API reference
 
@@ -246,8 +251,11 @@ The webhook is fire-and-forget with a 10-second timeout. If the webhook fails, t
 
 ```http
 POST /agents
+X-API-Key: <KEY>
 {"id": "your-agent-name", "aliases": ["short-name", "alt-name"]}
 ```
+
+Returns `agent_token` in the response. Store it for subsequent operations.
 
 Aliases are optional. Messages sent to any alias are delivered to the canonical inbox.
 
@@ -255,36 +263,49 @@ Aliases are optional. Messages sent to any alias are delivered to the canonical 
 
 ```http
 POST /agents/{recipient}/inbox
+X-Agent-Token: <TOKEN>
 {
   "thread_id": "task-123",
-  "from": "your-agent-name",
   "type": "request",
   "content": {"instruction": "..."}
 }
 ```
 
+Sender identity is derived from the agent token. No `from` field needed.
+
 ### Check inbox
 
 ```http
 GET /agents/{your-agent-name}/inbox?status=unread&thread_id=task-123&timeout=10
+X-Agent-Token: <TOKEN>
 ```
 
 ### Acknowledge
 
 ```http
 POST /inbox/messages/{message_id}/ack
+X-Agent-Token: <TOKEN>
 ```
 
 ### Conversation history
 
 ```http
 GET /threads/{thread_id}/messages
+X-API-Key: <KEY>
 ```
 
 ### List agents
 
 ```http
 GET /agents
+X-API-Key: <KEY>
+```
+
+### Delete agent
+
+```http
+DELETE /agents/{agent_id}
+X-API-Key: <KEY>
 ```
 
 ### Health check

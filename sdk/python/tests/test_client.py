@@ -1,10 +1,13 @@
 """Unit tests for Stream0Client using mocked HTTP responses."""
 
+import json
+
 import pytest
 import responses
 
 from stream0 import (
     Stream0Client,
+    Agent,
     AuthenticationError,
     NotFoundError,
     TimeoutError,
@@ -17,14 +20,16 @@ BASE_URL = "http://localhost:8080"
 
 @pytest.fixture
 def client():
-    c = Stream0Client(BASE_URL)
+    """Client with API key for group-level operations."""
+    c = Stream0Client(BASE_URL, api_key="test-key-123")
     yield c
     c.close()
 
 
 @pytest.fixture
-def auth_client():
-    c = Stream0Client(BASE_URL, api_key="test-key-123")
+def agent_client():
+    """Client with agent token for agent-level operations."""
+    c = Stream0Client(BASE_URL, api_key="test-key-123", agent_token="atok-test-token")
     yield c
     c.close()
 
@@ -37,416 +42,14 @@ def test_health(client):
     responses.add(
         responses.GET,
         f"{BASE_URL}/health",
-        json={"status": "healthy", "version": "0.1.0-go"},
+        json={"status": "healthy", "version": "0.4.0"},
         status=200,
     )
     result = client.health()
     assert result["status"] == "healthy"
-    assert result["version"] == "0.1.0-go"
 
 
-# --- Topics ---
-
-
-@responses.activate
-def test_create_topic(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/topics",
-        json={"id": 1, "name": "events", "retention_days": 7, "message_count": 0},
-        status=201,
-    )
-    result = client.create_topic("events")
-    assert result["name"] == "events"
-    assert result["retention_days"] == 7
-
-    # Verify request body
-    body = responses.calls[0].request.body
-    assert b'"name": "events"' in body or b'"name":"events"' in body
-
-
-@responses.activate
-def test_create_topic_custom_retention(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/topics",
-        json={"id": 1, "name": "logs", "retention_days": 30, "message_count": 0},
-        status=201,
-    )
-    result = client.create_topic("logs", retention_days=30)
-    assert result["retention_days"] == 30
-
-
-@responses.activate
-def test_list_topics(client):
-    responses.add(
-        responses.GET,
-        f"{BASE_URL}/topics",
-        json=[
-            {"id": 1, "name": "alpha", "retention_days": 7, "message_count": 5},
-            {"id": 2, "name": "beta", "retention_days": 14, "message_count": 0},
-        ],
-        status=200,
-    )
-    result = client.list_topics()
-    assert len(result) == 2
-    assert result[0]["name"] == "alpha"
-
-
-@responses.activate
-def test_get_topic(client):
-    responses.add(
-        responses.GET,
-        f"{BASE_URL}/topics/events",
-        json={"id": 1, "name": "events", "retention_days": 7, "message_count": 42},
-        status=200,
-    )
-    result = client.get_topic("events")
-    assert result["name"] == "events"
-    assert result["message_count"] == 42
-
-
-@responses.activate
-def test_get_topic_not_found(client):
-    responses.add(
-        responses.GET,
-        f"{BASE_URL}/topics/ghost",
-        json={"error": "Topic not found"},
-        status=404,
-    )
-    with pytest.raises(NotFoundError) as exc_info:
-        client.get_topic("ghost")
-    assert exc_info.value.status_code == 404
-
-
-# --- Publish ---
-
-
-@responses.activate
-def test_publish(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/topics/events/messages",
-        json={"message_id": "msg-abc123", "offset": 1, "timestamp": "2024-01-01T00:00:00Z"},
-        status=201,
-    )
-    result = client.publish("events", {"action": "click"})
-    assert result["message_id"] == "msg-abc123"
-    assert result["offset"] == 1
-
-
-@responses.activate
-def test_publish_with_headers(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/topics/events/messages",
-        json={"message_id": "msg-abc123", "offset": 1, "timestamp": "2024-01-01T00:00:00Z"},
-        status=201,
-    )
-    result = client.publish("events", {"data": "value"}, headers={"trace-id": "xyz"})
-    assert result["message_id"] is not None
-
-
-@responses.activate
-def test_publish_to_nonexistent_topic(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/topics/ghost/messages",
-        json={"error": "Topic not found"},
-        status=404,
-    )
-    with pytest.raises(NotFoundError):
-        client.publish("ghost", {"x": 1})
-
-
-# --- Consume ---
-
-
-@responses.activate
-def test_consume(client):
-    responses.add(
-        responses.GET,
-        f"{BASE_URL}/topics/events/messages",
-        json={
-            "messages": [
-                {
-                    "id": "msg-1",
-                    "offset": 1,
-                    "payload": {"n": 1},
-                    "headers": {},
-                    "delivery_count": 1,
-                },
-                {
-                    "id": "msg-2",
-                    "offset": 2,
-                    "payload": {"n": 2},
-                    "headers": {},
-                    "delivery_count": 1,
-                },
-            ]
-        },
-        status=200,
-    )
-    messages = client.consume("events", "group1", timeout=1)
-    assert len(messages) == 2
-    assert messages[0]["id"] == "msg-1"
-    assert messages[1]["payload"]["n"] == 2
-
-
-@responses.activate
-def test_consume_empty(client):
-    responses.add(
-        responses.GET,
-        f"{BASE_URL}/topics/events/messages",
-        json={"messages": []},
-        status=200,
-    )
-    messages = client.consume("events", "group1", timeout=0.1)
-    assert messages == []
-
-
-@responses.activate
-def test_consume_query_params(client):
-    responses.add(
-        responses.GET,
-        f"{BASE_URL}/topics/events/messages",
-        json={"messages": []},
-        status=200,
-    )
-    client.consume("events", "workers", max_messages=5, timeout=10, visibility_timeout=60)
-
-    # Verify query parameters
-    request_url = responses.calls[0].request.url
-    assert "group=workers" in request_url
-    assert "max=5" in request_url
-    assert "timeout=10" in request_url
-    assert "visibility_timeout=60" in request_url
-
-
-# --- Ack ---
-
-
-@responses.activate
-def test_ack(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/messages/msg-abc/ack",
-        json={"status": "acknowledged", "message_id": "msg-abc"},
-        status=200,
-    )
-    result = client.ack("msg-abc", "group1")
-    assert result["status"] == "acknowledged"
-
-
-@responses.activate
-def test_ack_not_found(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/messages/msg-ghost/ack",
-        json={"error": "message not found or not leased by this group"},
-        status=404,
-    )
-    with pytest.raises(NotFoundError):
-        client.ack("msg-ghost", "group1")
-
-
-# --- Request-Reply ---
-
-
-@responses.activate
-def test_request(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/topics/tasks/request",
-        json={
-            "request_id": "msg-req1",
-            "correlation_id": "corr-abc",
-            "reply": {
-                "correlation_id": "corr-abc",
-                "payload": {"answer": 42},
-                "headers": {"correlation_id": "corr-abc"},
-            },
-        },
-        status=200,
-    )
-    result = client.request("tasks", {"question": "what?"}, timeout=5)
-    assert result["correlation_id"] == "corr-abc"
-    assert result["reply"]["payload"]["answer"] == 42
-
-
-@responses.activate
-def test_request_timeout(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/topics/tasks/request",
-        json={
-            "error": "request timed out waiting for reply",
-            "request_id": "msg-req1",
-            "correlation_id": "corr-abc",
-        },
-        status=504,
-    )
-    with pytest.raises(TimeoutError) as exc_info:
-        client.request("tasks", {"q": "test"}, timeout=1)
-    assert exc_info.value.status_code == 504
-
-
-@responses.activate
-def test_request_topic_not_found(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/topics/ghost/request",
-        json={"error": "Topic not found"},
-        status=404,
-    )
-    with pytest.raises(NotFoundError):
-        client.request("ghost", {"q": "test"})
-
-
-@responses.activate
-def test_reply(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/messages/msg-req1/reply",
-        json={
-            "status": "reply sent",
-            "correlation_id": "corr-abc",
-            "message_id": "msg-req1",
-        },
-        status=200,
-    )
-    result = client.reply("msg-req1", {"answer": 42})
-    assert result["status"] == "reply sent"
-    assert result["correlation_id"] == "corr-abc"
-
-
-@responses.activate
-def test_reply_with_ack(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/messages/msg-req1/reply",
-        json={
-            "status": "reply sent",
-            "correlation_id": "corr-abc",
-            "message_id": "msg-req1",
-        },
-        status=200,
-    )
-    result = client.reply("msg-req1", {"answer": 42}, group="workers")
-    assert result["status"] == "reply sent"
-
-    # Verify group was sent in body
-    import json
-    body = json.loads(responses.calls[0].request.body)
-    assert body["group"] == "workers"
-
-
-@responses.activate
-def test_reply_message_not_found(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/messages/msg-ghost/reply",
-        json={"error": "message not found"},
-        status=404,
-    )
-    with pytest.raises(NotFoundError):
-        client.reply("msg-ghost", {"x": 1})
-
-
-# --- Authentication ---
-
-
-@responses.activate
-def test_auth_header_sent(auth_client):
-    responses.add(
-        responses.GET,
-        f"{BASE_URL}/topics",
-        json=[],
-        status=200,
-    )
-    auth_client.list_topics()
-
-    # Verify API key header was sent
-    assert responses.calls[0].request.headers["X-API-Key"] == "test-key-123"
-
-
-@responses.activate
-def test_auth_failure(client):
-    responses.add(
-        responses.GET,
-        f"{BASE_URL}/topics",
-        json={"error": "missing X-API-Key header"},
-        status=401,
-    )
-    with pytest.raises(AuthenticationError) as exc_info:
-        client.list_topics()
-    assert exc_info.value.status_code == 401
-
-
-# --- Error handling ---
-
-
-@responses.activate
-def test_server_error(client):
-    responses.add(
-        responses.GET,
-        f"{BASE_URL}/topics",
-        json={"error": "internal server error"},
-        status=500,
-    )
-    with pytest.raises(ServerError) as exc_info:
-        client.list_topics()
-    assert exc_info.value.status_code == 500
-
-
-@responses.activate
-def test_bad_request(client):
-    responses.add(
-        responses.POST,
-        f"{BASE_URL}/topics",
-        json={"error": "name is required"},
-        status=400,
-    )
-    with pytest.raises(Stream0Error) as exc_info:
-        client.create_topic("")
-    assert exc_info.value.status_code == 400
-
-
-# --- Context manager ---
-
-
-@responses.activate
-def test_context_manager():
-    responses.add(
-        responses.GET,
-        f"{BASE_URL}/health",
-        json={"status": "healthy"},
-        status=200,
-    )
-    with Stream0Client(BASE_URL) as client:
-        result = client.health()
-        assert result["status"] == "healthy"
-
-
-# --- URL handling ---
-
-
-def test_trailing_slash_stripped():
-    client = Stream0Client("http://localhost:8080/")
-    assert client.base_url == "http://localhost:8080"
-    client.close()
-
-
-def test_url_construction():
-    client = Stream0Client("http://example.com:9090")
-    assert client._url("/topics") == "http://example.com:9090/topics"
-    client.close()
-
-
-# --- v2 Inbox Model Tests ---
-
-
-from stream0 import Agent
+# --- Agents (Group-auth) ---
 
 
 @responses.activate
@@ -465,7 +68,6 @@ def test_list_agents(client):
     agents = client.list_agents()
     assert len(agents) == 2
     assert agents[0]["id"] == "agent-1"
-    assert agents[1]["id"] == "agent-2"
 
 
 @responses.activate
@@ -485,15 +87,41 @@ def test_register_agent(client):
     responses.add(
         responses.POST,
         f"{BASE_URL}/agents",
-        json={"id": "agent-1", "created_at": "2024-01-01T00:00:00Z"},
+        json={
+            "id": "agent-1",
+            "agent_token": "atok-abc123",
+            "created_at": "2024-01-01T00:00:00Z",
+        },
         status=201,
     )
     result = client.register_agent("agent-1")
     assert result["id"] == "agent-1"
+    assert result["agent_token"] == "atok-abc123"
 
-    import json
     body = json.loads(responses.calls[0].request.body)
     assert body["id"] == "agent-1"
+
+
+@responses.activate
+def test_register_agent_with_options(client):
+    responses.add(
+        responses.POST,
+        f"{BASE_URL}/agents",
+        json={
+            "id": "agent-1",
+            "agent_token": "atok-abc123",
+            "description": "A test agent",
+            "aliases": ["a1"],
+            "created_at": "2024-01-01T00:00:00Z",
+        },
+        status=201,
+    )
+    result = client.register_agent("agent-1", aliases=["a1"], description="A test agent")
+    assert result["agent_token"] == "atok-abc123"
+
+    body = json.loads(responses.calls[0].request.body)
+    assert body["aliases"] == ["a1"]
+    assert body["description"] == "A test agent"
 
 
 @responses.activate
@@ -520,33 +148,54 @@ def test_delete_agent_not_found(client):
         client.delete_agent("ghost")
 
 
+# --- Inbox: Send (Agent-auth) ---
+
+
 @responses.activate
-def test_send_message(client):
+def test_send_message(agent_client):
     responses.add(
         responses.POST,
         f"{BASE_URL}/agents/worker/inbox",
         json={"message_id": "imsg-abc123", "created_at": "2024-01-01T00:00:00Z"},
         status=201,
     )
-    result = client.send(
+    result = agent_client.send(
         to="worker",
         thread_id="task-1",
-        from_agent="main",
         msg_type="request",
         content={"instruction": "do work"},
     )
     assert result["message_id"] == "imsg-abc123"
 
-    import json
     body = json.loads(responses.calls[0].request.body)
     assert body["thread_id"] == "task-1"
-    assert body["from"] == "main"
     assert body["type"] == "request"
     assert body["content"]["instruction"] == "do work"
+    assert "from" not in body  # from is set server-side via token
 
 
 @responses.activate
-def test_send_message_agent_not_found(client):
+def test_send_message_includes_agent_token(agent_client):
+    responses.add(
+        responses.POST,
+        f"{BASE_URL}/agents/worker/inbox",
+        json={"message_id": "imsg-1", "created_at": "2024-01-01T00:00:00Z"},
+        status=201,
+    )
+    agent_client.send(to="worker", thread_id="t1", msg_type="request")
+
+    assert responses.calls[0].request.headers["X-Agent-Token"] == "atok-test-token"
+
+
+def test_send_without_token_raises():
+    c = Stream0Client(BASE_URL, api_key="test-key")
+    with pytest.raises(Stream0Error, match="agent_token required"):
+        c.send(to="worker", thread_id="t1", msg_type="request")
+    c.close()
+
+
+@responses.activate
+def test_send_message_agent_not_found(agent_client):
     responses.add(
         responses.POST,
         f"{BASE_URL}/agents/ghost/inbox",
@@ -554,11 +203,14 @@ def test_send_message_agent_not_found(client):
         status=404,
     )
     with pytest.raises(NotFoundError):
-        client.send("ghost", "task-1", "main", "request")
+        agent_client.send("ghost", "task-1", "request")
+
+
+# --- Inbox: Receive (Agent-auth) ---
 
 
 @responses.activate
-def test_receive_messages(client):
+def test_receive_messages(agent_client):
     responses.add(
         responses.GET,
         f"{BASE_URL}/agents/worker/inbox",
@@ -577,68 +229,71 @@ def test_receive_messages(client):
         },
         status=200,
     )
-    messages = client.receive("worker", status="unread")
+    messages = agent_client.receive("worker", status="unread")
     assert len(messages) == 1
     assert messages[0]["thread_id"] == "task-1"
 
-    request_url = responses.calls[0].request.url
-    assert "status=unread" in request_url
+    assert responses.calls[0].request.headers["X-Agent-Token"] == "atok-test-token"
+    assert "status=unread" in responses.calls[0].request.url
 
 
 @responses.activate
-def test_receive_with_task_filter(client):
+def test_receive_with_thread_filter(agent_client):
     responses.add(
         responses.GET,
         f"{BASE_URL}/agents/worker/inbox",
         json={"messages": []},
         status=200,
     )
-    client.receive("worker", thread_id="task-42")
+    agent_client.receive("worker", thread_id="task-42")
 
-    request_url = responses.calls[0].request.url
-    assert "thread_id=task-42" in request_url
+    assert "thread_id=task-42" in responses.calls[0].request.url
 
 
 @responses.activate
-def test_receive_with_long_poll(client):
+def test_receive_with_long_poll(agent_client):
     responses.add(
         responses.GET,
         f"{BASE_URL}/agents/worker/inbox",
         json={"messages": []},
         status=200,
     )
-    client.receive("worker", timeout=10)
+    agent_client.receive("worker", timeout=10)
 
-    request_url = responses.calls[0].request.url
-    assert "timeout=10" in request_url
+    assert "timeout=10" in responses.calls[0].request.url
 
 
 @responses.activate
-def test_receive_empty(client):
+def test_receive_empty(agent_client):
     responses.add(
         responses.GET,
         f"{BASE_URL}/agents/worker/inbox",
         json={"messages": []},
         status=200,
     )
-    messages = client.receive("worker")
+    messages = agent_client.receive("worker")
     assert messages == []
 
 
+# --- Inbox: Ack (Agent-auth) ---
+
+
 @responses.activate
-def test_ack_inbox_message(client):
+def test_ack_inbox_message(agent_client):
     responses.add(
         responses.POST,
         f"{BASE_URL}/inbox/messages/imsg-abc/ack",
         json={"status": "acked", "message_id": "imsg-abc"},
         status=200,
     )
-    result = client.ack_inbox("imsg-abc")
+    result = agent_client.ack_inbox("imsg-abc")
     assert result["status"] == "acked"
+
+    assert responses.calls[0].request.headers["X-Agent-Token"] == "atok-test-token"
 
 
 @responses.activate
-def test_ack_inbox_message_not_found(client):
+def test_ack_inbox_message_not_found(agent_client):
     responses.add(
         responses.POST,
         f"{BASE_URL}/inbox/messages/imsg-ghost/ack",
@@ -646,7 +301,10 @@ def test_ack_inbox_message_not_found(client):
         status=404,
     )
     with pytest.raises(NotFoundError):
-        client.ack_inbox("imsg-ghost")
+        agent_client.ack_inbox("imsg-ghost")
+
+
+# --- Threads (Group-auth) ---
 
 
 @responses.activate
@@ -681,20 +339,98 @@ def test_get_thread_messages_empty(client):
     assert messages == []
 
 
+# --- Authentication ---
+
+
+@responses.activate
+def test_api_key_header_sent(client):
+    responses.add(
+        responses.GET,
+        f"{BASE_URL}/agents",
+        json={"agents": []},
+        status=200,
+    )
+    client.list_agents()
+
+    assert responses.calls[0].request.headers["X-API-Key"] == "test-key-123"
+
+
+@responses.activate
+def test_auth_failure(client):
+    responses.add(
+        responses.GET,
+        f"{BASE_URL}/agents",
+        json={"error": "missing X-API-Key header"},
+        status=401,
+    )
+    with pytest.raises(AuthenticationError) as exc_info:
+        client.list_agents()
+    assert exc_info.value.status_code == 401
+
+
+# --- Error handling ---
+
+
+@responses.activate
+def test_server_error(client):
+    responses.add(
+        responses.GET,
+        f"{BASE_URL}/agents",
+        json={"error": "internal server error"},
+        status=500,
+    )
+    with pytest.raises(ServerError) as exc_info:
+        client.list_agents()
+    assert exc_info.value.status_code == 500
+
+
+# --- Context manager ---
+
+
+@responses.activate
+def test_context_manager():
+    responses.add(
+        responses.GET,
+        f"{BASE_URL}/health",
+        json={"status": "healthy"},
+        status=200,
+    )
+    with Stream0Client(BASE_URL) as c:
+        result = c.health()
+        assert result["status"] == "healthy"
+
+
+# --- URL handling ---
+
+
+def test_trailing_slash_stripped():
+    c = Stream0Client("http://localhost:8080/")
+    assert c.base_url == "http://localhost:8080"
+    c.close()
+
+
+def test_url_construction():
+    c = Stream0Client("http://example.com:9090")
+    assert c._url("/agents") == "http://example.com:9090/agents"
+    c.close()
+
+
 # --- Agent high-level class ---
 
 
 @responses.activate
-def test_agent_register():
+def test_agent_register_stores_token():
     responses.add(
         responses.POST,
         f"{BASE_URL}/agents",
-        json={"id": "my-agent", "created_at": "2024-01-01T00:00:00Z"},
+        json={"id": "my-agent", "agent_token": "atok-xyz", "created_at": "2024-01-01T00:00:00Z"},
         status=201,
     )
-    with Agent("my-agent", url=BASE_URL) as agent:
+    with Agent("my-agent", url=BASE_URL, api_key="key") as agent:
         result = agent.register()
-        assert result["id"] == "my-agent"
+        assert result["agent_token"] == "atok-xyz"
+        # Token should be stored for subsequent operations
+        assert agent.client.agent_token == "atok-xyz"
 
 
 @responses.activate
@@ -705,14 +441,16 @@ def test_agent_send():
         json={"message_id": "imsg-1", "created_at": "2024-01-01T00:00:00Z"},
         status=201,
     )
-    with Agent("my-agent", url=BASE_URL) as agent:
+    with Agent("my-agent", url=BASE_URL, agent_token="atok-test") as agent:
         result = agent.send("other-agent", thread_id="t1", msg_type="request", content={"x": 1})
         assert result["message_id"] == "imsg-1"
 
-    # Verify from field is set to agent_id
-    import json
+    # Verify agent token header is sent
+    assert responses.calls[0].request.headers["X-Agent-Token"] == "atok-test"
+
+    # Verify no `from` field in body
     body = json.loads(responses.calls[0].request.body)
-    assert body["from"] == "my-agent"
+    assert "from" not in body
 
 
 @responses.activate
@@ -727,13 +465,12 @@ def test_agent_receive():
         },
         status=200,
     )
-    with Agent("my-agent", url=BASE_URL) as agent:
+    with Agent("my-agent", url=BASE_URL, agent_token="atok-test") as agent:
         messages = agent.receive()
         assert len(messages) == 1
 
-    # Verify status=unread is the default filter
-    request_url = responses.calls[0].request.url
-    assert "status=unread" in request_url
+    assert "status=unread" in responses.calls[0].request.url
+    assert responses.calls[0].request.headers["X-Agent-Token"] == "atok-test"
 
 
 @responses.activate
@@ -744,9 +481,11 @@ def test_agent_ack():
         json={"status": "acked", "message_id": "imsg-1"},
         status=200,
     )
-    with Agent("my-agent", url=BASE_URL) as agent:
+    with Agent("my-agent", url=BASE_URL, agent_token="atok-test") as agent:
         result = agent.ack("imsg-1")
         assert result["status"] == "acked"
+
+    assert responses.calls[0].request.headers["X-Agent-Token"] == "atok-test"
 
 
 @responses.activate
@@ -762,7 +501,7 @@ def test_agent_history():
         },
         status=200,
     )
-    with Agent("my-agent", url=BASE_URL) as agent:
+    with Agent("my-agent", url=BASE_URL, api_key="key") as agent:
         messages = agent.history("t1")
         assert len(messages) == 2
 
@@ -772,7 +511,7 @@ def test_agent_with_api_key():
     responses.add(
         responses.POST,
         f"{BASE_URL}/agents",
-        json={"id": "secure-agent", "created_at": "2024-01-01T00:00:00Z"},
+        json={"id": "secure-agent", "agent_token": "atok-s", "created_at": "2024-01-01T00:00:00Z"},
         status=201,
     )
     with Agent("secure-agent", url=BASE_URL, api_key="secret-key") as agent:
@@ -784,9 +523,17 @@ def test_agent_with_api_key():
 @responses.activate
 def test_agent_full_conversation():
     """Test a complete multi-turn conversation using the Agent class."""
-    # Register both agents
-    responses.add(responses.POST, f"{BASE_URL}/agents", json={"id": "main"}, status=201)
-    responses.add(responses.POST, f"{BASE_URL}/agents", json={"id": "translator"}, status=201)
+    # Register both agents — return agent tokens
+    responses.add(
+        responses.POST, f"{BASE_URL}/agents",
+        json={"id": "main", "agent_token": "atok-main"},
+        status=201,
+    )
+    responses.add(
+        responses.POST, f"{BASE_URL}/agents",
+        json={"id": "translator", "agent_token": "atok-translator"},
+        status=201,
+    )
 
     # Main sends request
     responses.add(
@@ -851,11 +598,15 @@ def test_agent_full_conversation():
         status=200,
     )
 
-    main = Agent("main", url=BASE_URL)
-    translator = Agent("translator", url=BASE_URL)
+    main = Agent("main", url=BASE_URL, api_key="key")
+    translator = Agent("translator", url=BASE_URL, api_key="key")
 
     main.register()
     translator.register()
+
+    # After registration, tokens should be stored
+    assert main.client.agent_token == "atok-main"
+    assert translator.client.agent_token == "atok-translator"
 
     # Main sends task
     main.send("translator", thread_id="t1", msg_type="request", content={"text": "translate this"})

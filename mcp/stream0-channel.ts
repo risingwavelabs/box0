@@ -7,27 +7,13 @@
  * Claude replies via the reply tool, which sends back through Stream0.
  *
  * Environment variables:
- *   STREAM0_URL       - Stream0 server URL (default: http://localhost:8080)
- *   STREAM0_API_KEY   - API key for authentication
- *   STREAM0_AGENT_ID  - This agent's ID on Stream0
+ *   STREAM0_URL         - Stream0 server URL (default: http://localhost:8080)
+ *   STREAM0_API_KEY     - API key for group-level auth (register, list agents)
+ *   STREAM0_AGENT_ID    - This agent's ID on Stream0
+ *   STREAM0_AGENT_TOKEN - Agent token for message operations (optional, obtained at registration)
  *
  * Usage:
  *   claude --dangerously-load-development-channels server:stream0-channel
- *
- * .mcp.json:
- *   {
- *     "mcpServers": {
- *       "stream0-channel": {
- *         "command": "bun",
- *         "args": ["./mcp/stream0-channel.ts"],
- *         "env": {
- *           "STREAM0_URL": "https://stream0.dev",
- *           "STREAM0_API_KEY": "sk-xxx",
- *           "STREAM0_AGENT_ID": "cao"
- *         }
- *       }
- *     }
- *   }
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -46,25 +32,40 @@ if (!AGENT_ID) {
   process.exit(1);
 }
 
-const headers: Record<string, string> = { "Content-Type": "application/json" };
-if (STREAM0_API_KEY) headers["X-API-Key"] = STREAM0_API_KEY;
+// Group-level headers (X-API-Key) for registration and discovery
+const groupHeaders: Record<string, string> = { "Content-Type": "application/json" };
+if (STREAM0_API_KEY) groupHeaders["X-API-Key"] = STREAM0_API_KEY;
+
+// Agent-level headers (X-Agent-Token) for send/receive/ack — set after registration
+let agentToken = process.env.STREAM0_AGENT_TOKEN || "";
+function agentHeaders(): Record<string, string> {
+  return { "Content-Type": "application/json", "X-Agent-Token": agentToken };
+}
 
 // --- Stream0 HTTP helpers ---
 
 async function stream0Get(
   path: string,
-  params?: Record<string, string>
+  params?: Record<string, string>,
+  useAgentAuth = false
 ): Promise<any> {
   const url = new URL(`${STREAM0_URL}${path}`);
   if (params) for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const resp = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(35000) });
+  const resp = await fetch(url.toString(), {
+    headers: useAgentAuth ? agentHeaders() : groupHeaders,
+    signal: AbortSignal.timeout(35000),
+  });
   return resp.json();
 }
 
-async function stream0Post(path: string, body?: any): Promise<any> {
+async function stream0Post(
+  path: string,
+  body?: any,
+  useAgentAuth = false
+): Promise<any> {
   const resp = await fetch(`${STREAM0_URL}${path}`, {
     method: "POST",
-    headers,
+    headers: useAgentAuth ? agentHeaders() : groupHeaders,
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(10000),
   });
@@ -74,7 +75,7 @@ async function stream0Post(path: string, body?: any): Promise<any> {
 // --- MCP Server ---
 
 const mcp = new Server(
-  { name: "stream0-channel", version: "0.2.0" },
+  { name: "stream0-channel", version: "0.4.0" },
   {
     capabilities: {
       experimental: { "claude/channel": {} },
@@ -189,7 +190,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params;
 
-  // --- discover ---
+  // --- discover (group-auth) ---
   if (name === "discover") {
     const result = await stream0Get("/agents");
     const agents = (result?.agents || [])
@@ -226,7 +227,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     };
   }
 
-  // --- delegate ---
+  // --- delegate (agent-auth for send/receive/ack) ---
   if (name === "delegate") {
     const { to, task, context, timeout: userTimeout } = args as {
       to: string;
@@ -238,16 +239,15 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const timeoutSec = Math.min(Math.max(userTimeout || 120, 10), 300);
     const threadId = `delegate-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    // Send the request
+    // Send the request (agent-auth, no "from" — server derives it from token)
     const content: any = { task };
     if (context) content.context = context;
 
     await stream0Post(`/agents/${to}/inbox`, {
       thread_id: threadId,
-      from: AGENT_ID,
       type: "request",
       content,
-    });
+    }, true);
 
     console.error(
       `[stream0-channel] Delegated to ${to} (thread: ${threadId}), waiting up to ${timeoutSec}s...`
@@ -264,12 +264,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         status: "unread",
         thread_id: threadId,
         timeout: String(pollTimeout),
-      });
+      }, true);
 
       const messages = result?.messages || [];
       for (const msg of messages) {
         // Ack immediately
-        await stream0Post(`/inbox/messages/${msg.id}/ack`);
+        await stream0Post(`/inbox/messages/${msg.id}/ack`, undefined, true);
 
         if (msg.type === "done") {
           const responseText =
@@ -337,7 +337,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     };
   }
 
-  // --- reply ---
+  // --- reply (agent-auth) ---
   if (name === "reply") {
     const { to, thread_id, type, content } = args as {
       to: string;
@@ -355,18 +355,17 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
     await stream0Post(`/agents/${to}/inbox`, {
       thread_id,
-      from: AGENT_ID,
       type,
       content: contentObj,
-    });
+    }, true);
 
     return { content: [{ type: "text", text: `Replied to ${to} (thread: ${thread_id})` }] };
   }
 
-  // --- ack ---
+  // --- ack (agent-auth) ---
   if (name === "ack") {
     const { message_id } = args as { message_id: string };
-    await stream0Post(`/inbox/messages/${message_id}/ack`);
+    await stream0Post(`/inbox/messages/${message_id}/ack`, undefined, true);
     return { content: [{ type: "text", text: `Acknowledged ${message_id}` }] };
   }
 
@@ -377,21 +376,28 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
 await mcp.connect(new StdioServerTransport());
 
-// Register agent on Stream0
-await stream0Post("/agents", { id: AGENT_ID });
+// Register agent on Stream0 (group-auth) and get agent token
+const regResult = await stream0Post("/agents", { id: AGENT_ID });
+if (regResult?.agent_token && !agentToken) {
+  agentToken = regResult.agent_token;
+}
 console.error(`[stream0-channel] Registered as ${AGENT_ID}, polling inbox...`);
+
+if (!agentToken) {
+  console.error("[stream0-channel] Warning: no agent token available. Message operations will fail.");
+}
 
 // Track pushed message IDs to avoid duplicates
 const pushed = new Set<string>();
 
-// Poll inbox and push events to Claude Code
+// Poll inbox and push events to Claude Code (agent-auth)
 async function pollLoop() {
   while (true) {
     try {
       const result = await stream0Get(`/agents/${AGENT_ID}/inbox`, {
         status: "unread",
         timeout: "25",
-      });
+      }, true);
 
       const messages = result?.messages || [];
       for (const msg of messages) {
