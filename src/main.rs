@@ -696,10 +696,9 @@ async fn cmd_agent_start(name: &str, description: &str, url: &str) {
         .arg(&mcp_config_path)
         .arg("--dangerously-load-development-channels")
         .arg("server:stream0-channel")
+        .arg("--dangerously-skip-permissions")
         .arg("--system-prompt")
-        .arg(&system_prompt)
-        .arg("--allowedTools")
-        .arg("mcp__stream0-channel__reply,mcp__stream0-channel__ack,mcp__stream0-channel__discover,mcp__stream0-channel__delegate,Read,Glob,Grep,Bash,Edit,Write");
+        .arg(&system_prompt);
 
     match cmd.status() {
         Ok(status) => std::process::exit(status.code().unwrap_or(0)),
