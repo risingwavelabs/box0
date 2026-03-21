@@ -54,7 +54,8 @@ enum Command {
     /// Delegate a task to a worker
     Delegate {
         worker: String,
-        task: String,
+        /// Task description (omit to read from stdin)
+        task: Option<String>,
     },
     /// Wait for pending task results
     Wait,
@@ -80,8 +81,22 @@ enum WorkerCommand {
     },
     /// List all workers
     Ls,
+    /// Show worker details
+    Info { name: String },
+    /// Update worker instructions
+    Update {
+        name: String,
+        #[arg(long)]
+        instructions: String,
+    },
     /// Remove a worker
     Remove { name: String },
+    /// Stop a worker (pause task processing)
+    Stop { name: String },
+    /// Start a stopped worker
+    Start { name: String },
+    /// Show recent task history for a worker
+    Logs { name: String },
     /// Run a one-off task
     Temp {
         task: String,
@@ -173,7 +188,14 @@ async fn main() {
                 node,
             } => cmd_worker_add(&name, &instructions, &node).await,
             WorkerCommand::Ls => cmd_worker_ls().await,
+            WorkerCommand::Info { name } => cmd_worker_info(&name).await,
+            WorkerCommand::Update { name, instructions } => {
+                cmd_worker_update(&name, &instructions).await
+            }
             WorkerCommand::Remove { name } => cmd_worker_remove(&name).await,
+            WorkerCommand::Stop { name } => cmd_worker_stop(&name).await,
+            WorkerCommand::Start { name } => cmd_worker_start(&name).await,
+            WorkerCommand::Logs { name } => cmd_worker_logs(&name).await,
             WorkerCommand::Temp { task, instructions } => {
                 cmd_worker_temp(&task, &instructions).await
             }
@@ -194,7 +216,20 @@ async fn main() {
             TeamCommand::Revoke { key_prefix } => cmd_team_revoke(&key_prefix).await,
         },
 
-        Command::Delegate { worker, task } => cmd_delegate(&worker, &task).await,
+        Command::Delegate { worker, task } => {
+            let task_content = match task {
+                Some(t) => t,
+                None => {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin()
+                        .read_to_string(&mut buf)
+                        .expect("failed to read from stdin");
+                    buf
+                }
+            };
+            cmd_delegate(&worker, &task_content).await;
+        }
         Command::Wait => cmd_wait().await,
         Command::Reply { thread_id, message } => cmd_reply(&thread_id, &message).await,
         Command::Status => cmd_status().await,
@@ -290,12 +325,108 @@ async fn cmd_worker_ls() {
     }
 }
 
+async fn cmd_worker_info(name: &str) {
+    let cfg = config::CliConfig::load();
+    let client = make_client(&cfg);
+
+    match client.get_worker(name).await {
+        Ok(w) => {
+            println!("Name:          {}", w.name);
+            println!("Node:          {}", w.node_id);
+            println!("Status:        {}", w.status);
+            println!("Registered by: {}", if w.registered_by.is_empty() { "(no auth)" } else { &w.registered_by });
+            println!("Created:       {}", w.created_at.format("%Y-%m-%d %H:%M:%S"));
+            println!("Instructions:  {}", w.instructions);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn cmd_worker_update(name: &str, instructions: &str) {
+    let cfg = config::CliConfig::load();
+    let client = make_client(&cfg);
+
+    match client.update_worker(name, instructions).await {
+        Ok(()) => println!("Worker \"{}\" updated.", name),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
 async fn cmd_worker_remove(name: &str) {
     let cfg = config::CliConfig::load();
     let client = make_client(&cfg);
 
     match client.remove_worker(name).await {
         Ok(()) => println!("Worker \"{}\" removed.", name),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn cmd_worker_stop(name: &str) {
+    let cfg = config::CliConfig::load();
+    let client = make_client(&cfg);
+
+    match client.stop_worker(name).await {
+        Ok(()) => println!("Worker \"{}\" stopped.", name),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn cmd_worker_start(name: &str) {
+    let cfg = config::CliConfig::load();
+    let client = make_client(&cfg);
+
+    match client.start_worker(name).await {
+        Ok(()) => println!("Worker \"{}\" started.", name),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn cmd_worker_logs(name: &str) {
+    let cfg = config::CliConfig::load();
+    let client = make_client(&cfg);
+
+    match client.worker_logs(name).await {
+        Ok(messages) => {
+            if messages.is_empty() {
+                println!("No task history for \"{}\".", name);
+            } else {
+                for msg in messages {
+                    let content = msg
+                        .content
+                        .as_ref()
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .chars()
+                        .take(80)
+                        .collect::<String>();
+                    println!(
+                        "{} {} {:<8} {} → {} {}",
+                        msg.created_at.format("%H:%M:%S"),
+                        &msg.thread_id,
+                        msg.msg_type,
+                        msg.from_agent,
+                        msg.to_agent,
+                        content,
+                    );
+                }
+            }
+        }
         Err(e) => {
             eprintln!("Error: {}", e);
             std::process::exit(1);

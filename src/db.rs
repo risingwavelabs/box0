@@ -43,6 +43,7 @@ pub struct Worker {
     pub instructions: String,
     pub node_id: String,
     pub status: String,
+    pub registered_by: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -121,6 +122,7 @@ impl Database {
                 instructions TEXT NOT NULL,
                 node_id TEXT NOT NULL DEFAULT 'local',
                 status TEXT NOT NULL DEFAULT 'active',
+                registered_by TEXT NOT NULL DEFAULT '',
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 PRIMARY KEY (tenant, name)
             );
@@ -476,12 +478,27 @@ impl Database {
 
     // --- Workers ---
 
+    fn parse_worker_row(row: &rusqlite::Row) -> rusqlite::Result<Worker> {
+        let ts: String = row.get(5)?;
+        Ok(Worker {
+            name: row.get(0)?,
+            instructions: row.get(1)?,
+            node_id: row.get(2)?,
+            status: row.get(3)?,
+            registered_by: row.get(4)?,
+            created_at: Database::parse_ts(&ts),
+        })
+    }
+
+    const WORKER_COLS: &str = "name, instructions, node_id, status, registered_by, created_at";
+
     pub fn register_worker(
         &self,
         tenant: &str,
         name: &str,
         instructions: &str,
         node_id: &str,
+        registered_by: &str,
     ) -> Result<Worker> {
         let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction()?;
@@ -492,8 +509,8 @@ impl Database {
         )?;
 
         tx.execute(
-            "INSERT INTO workers (tenant, name, instructions, node_id) VALUES (?1, ?2, ?3, ?4)",
-            params![tenant, name, instructions, node_id],
+            "INSERT INTO workers (tenant, name, instructions, node_id, registered_by) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![tenant, name, instructions, node_id, registered_by],
         )?;
 
         tx.commit()?;
@@ -509,26 +526,17 @@ impl Database {
             instructions: instructions.to_string(),
             node_id: node_id.to_string(),
             status: "active".to_string(),
+            registered_by: registered_by.to_string(),
             created_at: Self::parse_ts(&ts),
         })
     }
 
     pub fn list_workers(&self, tenant: &str) -> Result<Vec<Worker>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT name, instructions, node_id, status, created_at FROM workers WHERE tenant = ?1 ORDER BY created_at ASC",
-        )?;
+        let mut stmt =
+            conn.prepare(&format!("SELECT {} FROM workers WHERE tenant = ?1 ORDER BY created_at ASC", Self::WORKER_COLS))?;
         let workers = stmt
-            .query_map(params![tenant], |row| {
-                let ts: String = row.get(4)?;
-                Ok(Worker {
-                    name: row.get(0)?,
-                    instructions: row.get(1)?,
-                    node_id: row.get(2)?,
-                    status: row.get(3)?,
-                    created_at: Database::parse_ts(&ts),
-                })
-            })?
+            .query_map(params![tenant], Self::parse_worker_row)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(workers)
     }
@@ -536,25 +544,40 @@ impl Database {
     pub fn get_worker(&self, tenant: &str, name: &str) -> Result<Option<Worker>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT name, instructions, node_id, status, created_at FROM workers WHERE tenant = ?1 AND name = ?2",
+            &format!("SELECT {} FROM workers WHERE tenant = ?1 AND name = ?2", Self::WORKER_COLS),
             params![tenant, name],
-            |row| {
-                let ts: String = row.get(4)?;
-                Ok(Worker {
-                    name: row.get(0)?,
-                    instructions: row.get(1)?,
-                    node_id: row.get(2)?,
-                    status: row.get(3)?,
-                    created_at: Database::parse_ts(&ts),
-                })
-            },
+            Self::parse_worker_row,
         )
         .optional()
         .map_err(Into::into)
     }
 
-    pub fn remove_worker(&self, tenant: &str, name: &str) -> Result<()> {
+    /// Remove a worker. Only the creator (registered_by) can remove it.
+    /// Pass empty string for registered_by to skip the check (internal use).
+    pub fn remove_worker(
+        &self,
+        tenant: &str,
+        name: &str,
+        registered_by: &str,
+    ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+
+        // Check ownership
+        if !registered_by.is_empty() {
+            let owner: String = conn
+                .query_row(
+                    "SELECT registered_by FROM workers WHERE tenant = ?1 AND name = ?2",
+                    params![tenant, name],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or_else(|| anyhow::anyhow!("worker not found"))?;
+
+            if owner != registered_by {
+                anyhow::bail!("permission denied: worker was created by someone else");
+            }
+        }
+
         let tx = conn.unchecked_transaction()?;
 
         let deleted = tx.execute(
@@ -578,6 +601,74 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_worker_instructions(
+        &self,
+        tenant: &str,
+        name: &str,
+        instructions: &str,
+        registered_by: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+
+        if !registered_by.is_empty() {
+            let owner: String = conn
+                .query_row(
+                    "SELECT registered_by FROM workers WHERE tenant = ?1 AND name = ?2",
+                    params![tenant, name],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or_else(|| anyhow::anyhow!("worker not found"))?;
+
+            if owner != registered_by {
+                anyhow::bail!("permission denied: worker was created by someone else");
+            }
+        }
+
+        let updated = conn.execute(
+            "UPDATE workers SET instructions = ?3 WHERE tenant = ?1 AND name = ?2",
+            params![tenant, name, instructions],
+        )?;
+        if updated == 0 {
+            anyhow::bail!("worker not found");
+        }
+        Ok(())
+    }
+
+    pub fn set_worker_status(
+        &self,
+        tenant: &str,
+        name: &str,
+        status: &str,
+        registered_by: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+
+        if !registered_by.is_empty() {
+            let owner: String = conn
+                .query_row(
+                    "SELECT registered_by FROM workers WHERE tenant = ?1 AND name = ?2",
+                    params![tenant, name],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or_else(|| anyhow::anyhow!("worker not found"))?;
+
+            if owner != registered_by {
+                anyhow::bail!("permission denied: worker was created by someone else");
+            }
+        }
+
+        let updated = conn.execute(
+            "UPDATE workers SET status = ?3 WHERE tenant = ?1 AND name = ?2",
+            params![tenant, name, status],
+        )?;
+        if updated == 0 {
+            anyhow::bail!("worker not found");
+        }
+        Ok(())
+    }
+
     pub fn get_active_workers_for_node(
         &self,
         tenant: &str,
@@ -585,21 +676,45 @@ impl Database {
     ) -> Result<Vec<Worker>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT name, instructions, node_id, status, created_at FROM workers WHERE tenant = ?1 AND node_id = ?2 AND status = 'active'",
+            &format!("SELECT {} FROM workers WHERE tenant = ?1 AND node_id = ?2 AND status = 'active'", Self::WORKER_COLS),
         )?;
         let workers = stmt
-            .query_map(params![tenant, node_id], |row| {
-                let ts: String = row.get(4)?;
-                Ok(Worker {
-                    name: row.get(0)?,
-                    instructions: row.get(1)?,
-                    node_id: row.get(2)?,
-                    status: row.get(3)?,
+            .query_map(params![tenant, node_id], Self::parse_worker_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(workers)
+    }
+
+    /// Get recent task threads for a worker (for logs).
+    pub fn get_worker_logs(
+        &self,
+        tenant: &str,
+        worker_name: &str,
+        limit: i64,
+    ) -> Result<Vec<InboxMessage>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, thread_id, from_agent, to_agent, type, content, status, created_at
+             FROM inbox_messages
+             WHERE tenant = ?1 AND (to_agent = ?2 OR from_agent = ?2)
+             ORDER BY created_at DESC LIMIT ?3",
+        )?;
+        let messages = stmt
+            .query_map(params![tenant, worker_name, limit], |row| {
+                let content_str: Option<String> = row.get(5)?;
+                let ts: String = row.get(7)?;
+                Ok(InboxMessage {
+                    id: row.get(0)?,
+                    thread_id: row.get(1)?,
+                    from_agent: row.get(2)?,
+                    to_agent: row.get(3)?,
+                    msg_type: row.get(4)?,
+                    content: content_str.and_then(|s| serde_json::from_str(&s).ok()),
+                    status: row.get(6)?,
                     created_at: Database::parse_ts(&ts),
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(workers)
+        Ok(messages)
     }
 
     // --- API Keys ---
@@ -779,7 +894,7 @@ mod tests {
     fn test_register_worker() {
         let db = test_db();
         let worker = db
-            .register_worker("default", "reviewer", "Review code.", "local")
+            .register_worker("default", "reviewer", "Review code.", "local", "key1")
             .unwrap();
         assert_eq!(worker.name, "reviewer");
         assert_eq!(worker.node_id, "local");
@@ -791,9 +906,9 @@ mod tests {
     #[test]
     fn test_list_workers() {
         let db = test_db();
-        db.register_worker("default", "reviewer", "Review code.", "local")
+        db.register_worker("default", "reviewer", "Review code.", "local", "key1")
             .unwrap();
-        db.register_worker("default", "tester", "Run tests.", "local")
+        db.register_worker("default", "tester", "Run tests.", "local", "key1")
             .unwrap();
 
         let workers = db.list_workers("default").unwrap();
@@ -803,9 +918,9 @@ mod tests {
     #[test]
     fn test_remove_worker() {
         let db = test_db();
-        db.register_worker("default", "reviewer", "Review code.", "local")
+        db.register_worker("default", "reviewer", "Review code.", "local", "key1")
             .unwrap();
-        db.remove_worker("default", "reviewer").unwrap();
+        db.remove_worker("default", "reviewer", "key1").unwrap();
 
         let workers = db.list_workers("default").unwrap();
         assert_eq!(workers.len(), 0);
@@ -817,8 +932,48 @@ mod tests {
     #[test]
     fn test_remove_worker_not_found() {
         let db = test_db();
-        let result = db.remove_worker("default", "nonexistent");
+        let result = db.remove_worker("default", "nonexistent", "");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_worker_ownership() {
+        let db = test_db();
+        db.register_worker("default", "reviewer", "Review.", "local", "alice")
+            .unwrap();
+
+        // Alice can remove her own worker
+        // Bob cannot
+        let result = db.remove_worker("default", "reviewer", "bob");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("permission denied"));
+
+        // Alice can
+        db.remove_worker("default", "reviewer", "alice").unwrap();
+    }
+
+    #[test]
+    fn test_worker_stop_start() {
+        let db = test_db();
+        db.register_worker("default", "w", "x", "local", "k").unwrap();
+
+        db.set_worker_status("default", "w", "stopped", "k").unwrap();
+        let w = db.get_worker("default", "w").unwrap().unwrap();
+        assert_eq!(w.status, "stopped");
+
+        db.set_worker_status("default", "w", "active", "k").unwrap();
+        let w = db.get_worker("default", "w").unwrap().unwrap();
+        assert_eq!(w.status, "active");
+    }
+
+    #[test]
+    fn test_worker_update_instructions() {
+        let db = test_db();
+        db.register_worker("default", "w", "old", "local", "k").unwrap();
+
+        db.update_worker_instructions("default", "w", "new instructions", "k").unwrap();
+        let w = db.get_worker("default", "w").unwrap().unwrap();
+        assert_eq!(w.instructions, "new instructions");
     }
 
     #[test]
@@ -841,7 +996,7 @@ mod tests {
     fn test_node_with_workers_cannot_remove() {
         let db = test_db();
         db.register_node("default", "gpu-box").unwrap();
-        db.register_worker("default", "ml", "ML agent.", "gpu-box")
+        db.register_worker("default", "ml", "ML agent.", "gpu-box", "key1")
             .unwrap();
 
         let result = db.remove_node("default", "gpu-box");
@@ -854,9 +1009,9 @@ mod tests {
         db.register_node("default", "local").unwrap();
         db.register_node("default", "gpu-box").unwrap();
 
-        db.register_worker("default", "reviewer", "Review.", "local")
+        db.register_worker("default", "reviewer", "Review.", "local", "key1")
             .unwrap();
-        db.register_worker("default", "ml", "ML.", "gpu-box")
+        db.register_worker("default", "ml", "ML.", "gpu-box", "key1")
             .unwrap();
 
         let local = db.get_active_workers_for_node("default", "local").unwrap();

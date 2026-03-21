@@ -18,7 +18,11 @@ use crate::db::Database;
 // --- Tenant ---
 
 #[derive(Clone)]
-pub struct Tenant(pub String);
+pub struct Tenant {
+    pub name: String,
+    /// API key prefix identifying who made the request. Empty if no auth.
+    pub key_prefix: String,
+}
 
 // --- App State ---
 
@@ -89,10 +93,10 @@ async fn auth_middleware(
     next: Next,
 ) -> impl IntoResponse {
     if !state.db.has_api_keys() {
-        // No API keys configured — open access, default tenant
-        request
-            .extensions_mut()
-            .insert(Tenant("default".to_string()));
+        request.extensions_mut().insert(Tenant {
+            name: "default".to_string(),
+            key_prefix: String::new(),
+        });
         return next.run(request).await;
     }
 
@@ -110,8 +114,12 @@ async fn auth_middleware(
     }
 
     match state.db.validate_api_key(key) {
-        Ok(Some(tenant)) => {
-            request.extensions_mut().insert(Tenant(tenant));
+        Ok(Some(tenant_name)) => {
+            let prefix = key[..std::cmp::min(12, key.len())].to_string();
+            request.extensions_mut().insert(Tenant {
+                name: tenant_name,
+                key_prefix: prefix,
+            });
             next.run(request).await
         }
         _ => (
@@ -135,9 +143,9 @@ async fn health_handler() -> Json<serde_json::Value> {
 
 async fn list_agents_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
 ) -> impl IntoResponse {
-    match state.db.list_agents(&tenant) {
+    match state.db.list_agents(&tenant.name) {
         Ok(agents) => (StatusCode::OK, Json(serde_json::json!({"agents": agents}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -145,12 +153,12 @@ async fn list_agents_handler(
 
 async fn register_agent_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Json(req): Json<RegisterAgentRequest>,
 ) -> impl IntoResponse {
     match state
         .db
-        .register_agent(&tenant, &req.id, req.aliases.as_deref())
+        .register_agent(&tenant.name, &req.id, req.aliases.as_deref())
     {
         Ok(agent) => (
             StatusCode::CREATED,
@@ -163,10 +171,10 @@ async fn register_agent_handler(
 
 async fn delete_agent_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Path(agent_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.delete_agent(&tenant, &agent_id) {
+    match state.db.delete_agent(&tenant.name, &agent_id) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "deleted", "agent_id": agent_id})),
@@ -180,11 +188,11 @@ async fn delete_agent_handler(
 
 async fn send_inbox_message_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Path(agent_id): Path<String>,
     Json(req): Json<SendInboxRequest>,
 ) -> impl IntoResponse {
-    let resolved_id = match state.db.resolve_agent(&tenant, &agent_id) {
+    let resolved_id = match state.db.resolve_agent(&tenant.name, &agent_id) {
         Ok(Some(id)) => id,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -199,7 +207,7 @@ async fn send_inbox_message_handler(
     }
 
     match state.db.send_inbox_message(
-        &tenant,
+        &tenant.name,
         &req.thread_id,
         &req.from,
         &resolved_id,
@@ -220,24 +228,24 @@ async fn send_inbox_message_handler(
 
 async fn get_inbox_messages_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Path(agent_id): Path<String>,
     Query(params): Query<InboxQuery>,
 ) -> impl IntoResponse {
-    let resolved_id = match state.db.resolve_agent(&tenant, &agent_id) {
+    let resolved_id = match state.db.resolve_agent(&tenant.name, &agent_id) {
         Ok(Some(id)) => id,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
 
-    let _ = state.db.update_last_seen(&tenant, &resolved_id);
+    let _ = state.db.update_last_seen(&tenant.name, &resolved_id);
 
     let timeout = params.timeout.unwrap_or(0.0).clamp(0.0, 30.0);
     let start = std::time::Instant::now();
 
     loop {
         match state.db.get_inbox_messages(
-            &tenant,
+            &tenant.name,
             &resolved_id,
             params.status.as_deref(),
             params.thread_id.as_deref(),
@@ -269,10 +277,10 @@ async fn get_inbox_messages_handler(
 
 async fn ack_inbox_message_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Path(message_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.ack_inbox_message(&tenant, &message_id) {
+    match state.db.ack_inbox_message(&tenant.name, &message_id) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "acked", "message_id": message_id})),
@@ -284,10 +292,10 @@ async fn ack_inbox_message_handler(
 
 async fn get_thread_messages_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Path(thread_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.get_thread_messages(&tenant, &thread_id) {
+    match state.db.get_thread_messages(&tenant.name, &thread_id) {
         Ok(messages) => (
             StatusCode::OK,
             Json(serde_json::json!({"messages": messages})),
@@ -301,12 +309,12 @@ async fn get_thread_messages_handler(
 
 async fn register_worker_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Json(req): Json<RegisterWorkerRequest>,
 ) -> impl IntoResponse {
     match state
         .db
-        .register_worker(&tenant, &req.name, &req.instructions, &req.node_id)
+        .register_worker(&tenant.name, &req.name, &req.instructions, &req.node_id, &tenant.key_prefix)
     {
         Ok(worker) => (
             StatusCode::CREATED,
@@ -319,9 +327,9 @@ async fn register_worker_handler(
 
 async fn list_workers_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
 ) -> impl IntoResponse {
-    match state.db.list_workers(&tenant) {
+    match state.db.list_workers(&tenant.name) {
         Ok(workers) => (
             StatusCode::OK,
             Json(serde_json::json!({"workers": workers})),
@@ -333,10 +341,10 @@ async fn list_workers_handler(
 
 async fn get_worker_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.get_worker(&tenant, &name) {
+    match state.db.get_worker(&tenant.name, &name) {
         Ok(Some(worker)) => {
             (StatusCode::OK, Json(serde_json::to_value(worker).unwrap())).into_response()
         }
@@ -347,10 +355,10 @@ async fn get_worker_handler(
 
 async fn remove_worker_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.remove_worker(&tenant, &name) {
+    match state.db.remove_worker(&tenant.name, &name, &tenant.key_prefix) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "removed", "worker": name})),
@@ -360,14 +368,89 @@ async fn remove_worker_handler(
     }
 }
 
+#[derive(Deserialize)]
+struct UpdateWorkerRequest {
+    instructions: String,
+}
+
+async fn update_worker_handler(
+    State(state): State<SharedState>,
+    Extension(tenant): Extension<Tenant>,
+    Path(name): Path<String>,
+    Json(req): Json<UpdateWorkerRequest>,
+) -> impl IntoResponse {
+    match state
+        .db
+        .update_worker_instructions(&tenant.name, &name, &req.instructions, &tenant.key_prefix)
+    {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "updated", "worker": name})),
+        )
+            .into_response(),
+        Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+async fn stop_worker_handler(
+    State(state): State<SharedState>,
+    Extension(tenant): Extension<Tenant>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    match state
+        .db
+        .set_worker_status(&tenant.name, &name, "stopped", &tenant.key_prefix)
+    {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "stopped", "worker": name})),
+        )
+            .into_response(),
+        Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+async fn start_worker_handler(
+    State(state): State<SharedState>,
+    Extension(tenant): Extension<Tenant>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    match state
+        .db
+        .set_worker_status(&tenant.name, &name, "active", &tenant.key_prefix)
+    {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "active", "worker": name})),
+        )
+            .into_response(),
+        Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+async fn worker_logs_handler(
+    State(state): State<SharedState>,
+    Extension(tenant): Extension<Tenant>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    match state.db.get_worker_logs(&tenant.name, &name, 20) {
+        Ok(messages) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"messages": messages})),
+        )
+            .into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
 // --- Handlers: Nodes ---
 
 async fn register_node_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Json(req): Json<RegisterNodeRequest>,
 ) -> impl IntoResponse {
-    match state.db.register_node(&tenant, &req.id) {
+    match state.db.register_node(&tenant.name, &req.id) {
         Ok(node) => (
             StatusCode::CREATED,
             Json(serde_json::to_value(node).unwrap()),
@@ -379,9 +462,9 @@ async fn register_node_handler(
 
 async fn list_nodes_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
 ) -> impl IntoResponse {
-    match state.db.list_nodes(&tenant) {
+    match state.db.list_nodes(&tenant.name) {
         Ok(nodes) => (StatusCode::OK, Json(serde_json::json!({"nodes": nodes}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -389,10 +472,10 @@ async fn list_nodes_handler(
 
 async fn remove_node_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Path(node_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.remove_node(&tenant, &node_id) {
+    match state.db.remove_node(&tenant.name, &node_id) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "removed", "node": node_id})),
@@ -404,10 +487,10 @@ async fn remove_node_handler(
 
 async fn heartbeat_node_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Path(node_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.heartbeat_node(&tenant, &node_id) {
+    match state.db.heartbeat_node(&tenant.name, &node_id) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "ok"})),
@@ -421,11 +504,11 @@ async fn heartbeat_node_handler(
 
 async fn team_invite_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Json(req): Json<TeamInviteRequest>,
 ) -> impl IntoResponse {
     let desc = req.description.unwrap_or_default();
-    match state.db.create_api_key_full(&tenant, &desc) {
+    match state.db.create_api_key_full(&tenant.name, &desc) {
         Ok((full_key, info)) => (
             StatusCode::CREATED,
             Json(serde_json::json!({
@@ -441,9 +524,9 @@ async fn team_invite_handler(
 
 async fn team_list_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
 ) -> impl IntoResponse {
-    match state.db.list_api_keys(&tenant) {
+    match state.db.list_api_keys(&tenant.name) {
         Ok(keys) => (StatusCode::OK, Json(serde_json::json!({"keys": keys}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -451,10 +534,10 @@ async fn team_list_handler(
 
 async fn team_revoke_handler(
     State(state): State<SharedState>,
-    Extension(Tenant(tenant)): Extension<Tenant>,
+    Extension(tenant): Extension<Tenant>,
     Path(key_prefix): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.revoke_api_key(&tenant, &key_prefix) {
+    match state.db.revoke_api_key(&tenant.name, &key_prefix) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "revoked"})),
@@ -517,8 +600,11 @@ pub async fn run(config: ServerConfig) {
         )
         .route(
             "/workers/{name}",
-            get(get_worker_handler).delete(remove_worker_handler),
+            get(get_worker_handler).delete(remove_worker_handler).put(update_worker_handler),
         )
+        .route("/workers/{name}/stop", post(stop_worker_handler))
+        .route("/workers/{name}/start", post(start_worker_handler))
+        .route("/workers/{name}/logs", get(worker_logs_handler))
         // Nodes
         .route("/nodes", get(list_nodes_handler).post(register_node_handler))
         .route("/nodes/{node_id}", delete(remove_node_handler))

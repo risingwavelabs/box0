@@ -166,6 +166,40 @@ impl BhClient {
         Ok(())
     }
 
+    pub async fn update_worker(&self, name: &str, instructions: &str) -> Result<()> {
+        let req = self
+            .client
+            .put(format!("{}/workers/{}", self.base_url, name))
+            .json(&serde_json::json!({"instructions": instructions}));
+        self.request(req).await?;
+        Ok(())
+    }
+
+    pub async fn stop_worker(&self, name: &str) -> Result<()> {
+        let req = self
+            .client
+            .post(format!("{}/workers/{}/stop", self.base_url, name));
+        self.request(req).await?;
+        Ok(())
+    }
+
+    pub async fn start_worker(&self, name: &str) -> Result<()> {
+        let req = self
+            .client
+            .post(format!("{}/workers/{}/start", self.base_url, name));
+        self.request(req).await?;
+        Ok(())
+    }
+
+    pub async fn worker_logs(&self, name: &str) -> Result<Vec<crate::db::InboxMessage>> {
+        let req = self
+            .client
+            .get(format!("{}/workers/{}/logs", self.base_url, name));
+        let resp = self.request(req).await?;
+        let body: InboxResponse = resp.json().await?;
+        Ok(body.messages)
+    }
+
     // --- Inbox ---
 
     pub async fn send_message(
