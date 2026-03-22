@@ -170,6 +170,12 @@ pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) 
         return;
     }
 
+    // Create workspace root for remote workers
+    let workspace_root = std::path::PathBuf::from(
+        dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."))
+    ).join(".b0").join("workers");
+    let workspace_root = Arc::new(workspace_root);
+
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_TASKS));
     let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
     let poll_interval = Duration::from_millis(POLL_INTERVAL_MS);
@@ -216,13 +222,22 @@ pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) 
 
                 let client = client.clone();
                 let group = group.clone();
+                let worker_name = worker.name.clone();
                 let instructions = worker.instructions.clone();
                 let worker_runtime = worker.runtime.clone();
+                let workspace_root = workspace_root.clone();
                 let sessions = sessions.clone();
                 let msg = msg.clone();
 
                 tokio::spawn(async move {
                     let _permit = permit;
+
+                    // Create worker directory
+                    let worker_dir = workspace_root.join(&worker_name);
+                    if let Err(e) = tokio::fs::create_dir_all(&worker_dir).await {
+                        tracing::error!(worker = worker_name, error = %e, "Failed to create worker directory");
+                        return;
+                    }
 
                     let task_content = msg
                         .content
@@ -242,11 +257,12 @@ pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) 
                         worker = msg.to_agent,
                         thread = msg.thread_id,
                         runtime = resolved_rt,
+                        dir = %worker_dir.display(),
                         "Processing task"
                     );
 
                     let result =
-                        invoke_runtime(&worker_runtime, &instructions, &task_content, resume_session.as_deref(), None)
+                        invoke_runtime(&worker_runtime, &instructions, &task_content, resume_session.as_deref(), Some(&worker_dir))
                             .await;
 
                     match result {
