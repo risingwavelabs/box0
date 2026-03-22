@@ -59,6 +59,9 @@ enum Command {
         /// Group name
         #[arg(long)]
         group: Option<String>,
+        /// Continue an existing conversation
+        #[arg(long)]
+        thread: Option<String>,
         /// Worker name
         worker: String,
         /// Task (omit to read from stdin)
@@ -401,7 +404,7 @@ async fn main() {
             }
         },
 
-        Command::Delegate { group, worker, task } => { let group = resolve_group(group);
+        Command::Delegate { group, thread, worker, task } => { let group = resolve_group(group);
             let task_content = match task {
                 Some(t) => t,
                 None => {
@@ -411,7 +414,7 @@ async fn main() {
                     buf
                 }
             };
-            cmd_delegate(&group, &worker, &task_content).await;
+            cmd_delegate(&group, &worker, &task_content, thread.as_deref()).await;
         }
 
         Command::Wait => cmd_wait().await,
@@ -542,7 +545,7 @@ async fn cmd_worker_temp(group: &str, task: &str, instructions: &str) {
     }
 }
 
-async fn cmd_delegate(group: &str, worker: &str, task: &str) {
+async fn cmd_delegate(group: &str, worker: &str, task: &str, continue_thread: Option<&str>) {
     let mut cfg = config::CliConfig::load();
     let lead_id = cfg.lead_id();
     let client = make_client(&cfg);
@@ -556,9 +559,16 @@ async fn cmd_delegate(group: &str, worker: &str, task: &str) {
         eprintln!("Error registering lead agent: {}", e); std::process::exit(1);
     }
 
-    let thread_id = format!("thread-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+    // Reuse thread for multi-turn, or create new
+    let thread_id = match continue_thread {
+        Some(tid) => tid.to_string(),
+        None => format!("thread-{}", &uuid::Uuid::new_v4().to_string()[..8]),
+    };
 
-    match client.send_message(group, worker, &thread_id, &lead_id, "request", Some(&serde_json::json!(task))).await {
+    // For continuing a conversation, send as "answer" so daemon uses --resume
+    let msg_type = if continue_thread.is_some() { "answer" } else { "request" };
+
+    match client.send_message(group, worker, &thread_id, &lead_id, msg_type, Some(&serde_json::json!(task))).await {
         Ok(_) => {
             let mut pending = config::CliConfig::load_pending();
             pending.threads.insert(thread_id.clone(), config::PendingThread {
@@ -645,14 +655,32 @@ async fn cmd_reply(group: &str, thread_id: &str, message: &str) {
     let lead_id = cfg.lead_id();
     let client = make_client(&cfg);
 
+    // Try pending first, then fall back to requiring --worker
     let pending = config::CliConfig::load_pending();
     let worker = match pending.threads.get(thread_id) {
         Some(t) => t.worker.clone(),
-        None => { eprintln!("Error: thread \"{}\" not found in pending tasks.", thread_id); std::process::exit(1); }
+        None => {
+            // Look up worker from thread history
+            eprintln!("Error: thread \"{}\" not found. Use: b0 delegate --thread {} <worker> \"<message>\"", thread_id, thread_id);
+            std::process::exit(1);
+        }
     };
 
+    // Send as "answer" and re-add to pending for bh wait
     match client.send_message(group, &worker, thread_id, &lead_id, "answer", Some(&serde_json::json!(message))).await {
-        Ok(_) => println!("Reply sent to {} (thread {}).", worker, thread_id),
+        Ok(_) => {
+            // Re-add to pending so b0 wait can collect the response
+            let mut pending = config::CliConfig::load_pending();
+            pending.threads.insert(thread_id.to_string(), config::PendingThread {
+                worker: worker.clone(),
+                group: group.to_string(),
+                task: message.to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                temp: false,
+            });
+            let _ = config::CliConfig::save_pending(&pending);
+            println!("Reply sent to {} (thread {}). Run b0 wait to collect response.", worker, thread_id);
+        }
         Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
     }
 }
