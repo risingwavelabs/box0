@@ -1,33 +1,79 @@
 # Box0
 
-Box0 is a self-hosted multi-agent platform. It lets you define AI agents with different specializations, run them in parallel, and collect results. Single binary, works with Claude Code and Codex.
+An open-source agent swarm platform. Run multiple AI agents in parallel on your laptop or across a fleet of machines. Define agents with different roles, delegate tasks, and collect results. Single Rust binary with built-in web dashboard. Works with Claude Code and Codex.
 
-## Problem
+## Why Box0
 
-AI coding agents like Claude Code and Codex work alone. One agent handles everything sequentially: code review, security audit, documentation, testing. If you want multiple perspectives on the same question, or need several tasks done at once, you wait for one agent to finish before it can start the next.
+More agents means more work done. But running a swarm of agents raises real problems: where do they run, how do you assign work, how do you add machines, and how do you know what each agent is doing.
 
-There is no standard way to run multiple agents as a team, split work between them, or distribute them across machines.
+Box0 handles all of this:
 
-## Solution
+- **Run anywhere.** Start on your laptop with a single command. Add remote machines as nodes when you need more compute. Each node uses its own credentials.
+- **Orchestrate.** Your agent delegates tasks to workers in parallel. Box0 queues, dispatches, and routes each task to the right node. Results flow back automatically.
+- **Manage.** Add and remove workers, assign them to machines, organize teams with access control. One binary, no external dependencies.
+- **Observe.** Built-in web dashboard shows every worker, task, and result in real time. Logs are always accessible.
 
-Box0 provides the infrastructure to:
+## Use cases
 
-- **Run multiple agents in parallel.** Define agents with different instructions. They execute concurrently, each in its own isolated workspace.
-- **Multi-turn conversations.** Continue a conversation with a worker across multiple rounds using `--thread`. The worker remembers all previous turns.
-- **Distribute across machines.** Agents can run on your laptop, a GPU server, or any machine. Box0 routes tasks by name. Each machine uses its own local credentials.
-- **Integrate with existing tools.** Claude Code and Codex can learn to use Box0 automatically through skill installation. No workflow changes required.
-- **Isolate teams.** Groups provide workspace isolation. Multiple users or teams share one Box0 server without seeing each other's agents or data.
+**Multi-perspective debate.** Three agents with different viewpoints argue the same question. You get a synthesized conclusion.
 
-## Install
+> Create an optimist, a pessimist, and a realist. Ask them to debate whether we should rewrite our backend in Rust. Summarize their arguments.
+
+**Parallel code review.** Three reviewers examine the same diff simultaneously: correctness, security, performance. Results come back together.
+
+> Send this diff to the correctness-reviewer, security-reviewer, and perf-reviewer. Compile their feedback into one report.
+
+**Fan-out research.** One agent per topic. All research in parallel, then your agent compares findings.
+
+> Create 5 workers. Each one evaluates a different database: Postgres, MySQL, SQLite, DuckDB, RisingWave. Compare their findings.
+
+**Divide and conquer.** Split a large task by module or file. Each agent handles one piece.
+
+> Split the migration of src/api/ into three parts by subdirectory. Assign one worker to each. Migrate them to the new auth pattern.
+
+**Red team / blue team.** One agent builds, another attacks. Adversarial review as a workflow.
+
+> Have the implementer add input validation to the signup form. Then have the attacker try to bypass it. Iterate until the attacker gives up.
+
+## How it works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Your Machine                         │
+│                                                             │
+│   ┌─────────────────┐         ┌──────────────────────────┐ │
+│   │   Your Agent    │         │       Box0 Server        │ │
+│   │  (Claude Code / │──b0────▶│                          │ │
+│   │   Codex / You)  │ delegate│  ┌────────┐  ┌────────┐  │ │
+│   └─────────────────┘         │  │ Inbox  │  │  DB    │  │ │
+│                                │  └────────┘  └────────┘  │ │
+│   ┌─────────────────┐         │       ▲                   │ │
+│   │   Web Dashboard │◀────────│       │                   │ │
+│   │  (browser :8080)│  serves │       │ poll              │ │
+│   └─────────────────┘         └───────┼───────────────────┘ │
+│                                        │                     │
+│              ┌─────────────────────────┼──────────────────┐ │
+│              │    Node Daemon          │                   │ │
+│              │                         ▼                   │ │
+│              │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │ │
+│              │  │ worker-1 │  │ worker-2 │  │ worker-3 │  │ │
+│              │  │(optimist │  │(pessimist│  │(realist) │  │ │
+│              │  │  Claude) │  │  Claude) │  │  Claude) │  │ │
+│              │  └──────────┘  └──────────┘  └──────────┘  │ │
+│              └─────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Your agent sends tasks to the Box0 server via `b0 delegate`. The server stores them in an inbox. A node daemon polls the inbox, spawns a separate Claude Code (or Codex) process for each worker, and writes the results back. Your agent calls `b0 wait` to collect the responses.
+
+Each worker runs in its own isolated directory. Workers can also run across multiple machines. See [Multi-machine](docs/multi-machine.md).
+
+## Getting started
+
+### 1. Install
 
 ```bash
 npm install -g @box0/cli@latest
-```
-
-Or run directly without installing:
-
-```bash
-npx @box0/cli@latest server
 ```
 
 Or build from source:
@@ -38,36 +84,15 @@ cd box0 && cargo build --release
 export PATH="$PWD/target/release:$PATH"
 ```
 
-## Getting started
-
-This walkthrough uses Claude Code. Box0 also works with Codex or any tool that can run shell commands.
-
-### 1. Start the server
-
-In a separate terminal:
+### 2. Start the server
 
 ```bash
 b0 server
 ```
 
-On first start, Box0 creates an admin user with a personal group called "admin" and prints the admin key. The CLI is auto-configured on the server machine, no login needed.
+On first start, Box0 creates an admin account and prints your API key.
 
-### 2. Create workers
-
-```bash
-b0 worker add ux-expert --description "UX researcher" \
-  --instructions "You are a UX researcher. Evaluate developer tools from the perspective of daily workflow, ergonomics, and productivity."
-
-b0 worker add architect --description "Software architect" \
-  --instructions "You are a software architect. Evaluate tools from the perspective of technical capabilities, extensibility, and system design."
-
-b0 worker add pragmatist --description "Pragmatic tech lead" \
-  --instructions "You are a pragmatic tech lead. Cut through hype. Evaluate based on what actually ships faster with fewer bugs."
-```
-
-When `--group` is omitted, the default group (set during server setup) is used.
-
-### 3. Install the skill for Claude Code (or Codex)
+### 3. Teach your agent to use Box0
 
 For Claude Code:
 
@@ -81,156 +106,81 @@ For Codex:
 b0 skill install codex
 ```
 
-For other agents, run `b0 skill show` to print the skill content. Paste it into your agent's custom instructions.
+You only need to do this once.
 
-### 4. Use it
+### 4. Try it
 
-Open Claude Code (or Codex) and say something like:
+Open Claude Code and say:
 
-> ask ux-expert, architect, and pragmatist whether Claude Code or Codex is better for professional software development. then give me your own conclusion based on their arguments.
+> Create three workers: an optimist, a pessimist, and a realist. Ask them to debate whether AI will replace software engineers in 5 years. Then give me your own conclusion.
 
-Claude Code automatically calls `b0 delegate` for each worker, runs `b0 wait` to collect the results, and synthesizes a conclusion. Three agents, three perspectives, one answer.
+Your agent creates the workers, runs the debate in parallel, and synthesizes the results.
 
-## Multi-turn conversations
+### What just happened
 
-Continue a conversation with a worker by passing `--thread`:
+When you asked your agent to run the debate, here is what happened behind the scenes:
 
-```bash
-b0 delegate debater "Argue that Python is the best language."
-```
+1. Your agent called `b0 worker add` to create three workers, each with different instructions.
+2. Your agent called `b0 delegate` to send the debate topic to all three workers in parallel.
+3. Box0 dispatched each task to a separate Claude Code process, running simultaneously in isolated directories.
+4. Your agent called `b0 wait` to collect the three responses.
+5. Your agent read the responses and synthesized a final answer for you.
 
-This prints a thread ID (e.g. `thread-abc123`). After collecting the result with `b0 wait`, continue the conversation:
+You only typed one message. Your agent handled the rest through Box0's CLI.
 
-```bash
-b0 delegate --thread thread-abc123 debater "I disagree. Rust is better for safety. Counter my argument."
-b0 wait
-```
+## What you can do
 
-The worker remembers everything from previous turns. Each follow-up builds on the full conversation history.
-
-## Adding team members
-
-On the server machine (admin):
+**Add a worker:**
 
 ```bash
-b0 invite alice
-b0 group create dev-team
-b0 group add-member dev-team <alice-user-id>
+b0 worker add reviewer --instructions "You are a senior code reviewer." --description "Code reviewer"
 ```
 
-On Alice's laptop:
+**List workers:**
 
 ```bash
-b0 login http://server:8080 --key <alice-key>
-b0 worker add --group dev-team reviewer --instructions "Code reviewer."
-b0 delegate --group dev-team reviewer "Review src/main.rs"
-b0 wait
+b0 worker ls
 ```
 
-Each user has their own key. Users can be in multiple groups. Workers in a group are visible to all group members.
-
-## How it works
-
-```
-Your agent               Box0 Server              Worker nodes
-     |                         |                        |
-     |  b0 delegate reviewer   |                        |
-     |  ---------------------->  stores in inbox         |
-     |  b0 delegate security   |                        |
-     |  ---------------------->  stores in inbox         |
-     |                         |                        |
-     |                         |   daemon polls inboxes  |
-     |                         |   spawns claude CLI     |
-     |                         |   in worker's own dir   |
-     |                         |   <-------- results     |
-     |  b0 wait                |                        |
-     |  <----------------------  delivers results        |
-```
-
-Each worker runs in its own isolated directory under `workers/<name>/`. When a task arrives, the node daemon spawns the configured runtime as a subprocess in that directory. The task is piped via stdin. When done, the result goes back through the inbox.
-
-Workers support multiple runtimes. By default (`auto`), Box0 uses Claude Code if installed, otherwise falls back to Codex. You can also set the runtime explicitly per worker:
+**View worker logs:**
 
 ```bash
-b0 worker add reviewer --instructions "..." --runtime claude   # use Claude Code
-b0 worker add coder --instructions "..." --runtime codex       # use Codex
-b0 worker add helper --instructions "..."                      # auto-detect
+b0 worker logs <name>
 ```
 
-For multi-turn conversations, the daemon stores the Claude session ID and uses `--resume` on follow-up messages, preserving the full conversation history.
+**Remove a worker:**
 
-Workers use the machine's existing authentication (OAuth or API key). No special credential setup needed.
+```bash
+b0 worker remove <name>
+```
 
-## One-off tasks
+**Run a one-off task** (temporary worker, auto-cleans up):
 
 ```bash
 b0 worker temp "Summarize the top 5 differences between Rust and Go."
-b0 wait
 ```
 
-Creates a temporary worker, runs the task, auto-cleans up.
+These are the commands you run. Everything else is handled by your agent automatically.
 
-## Multi-machine
+## Concepts
 
-```bash
-# Machine A: start server
-b0 server
+| Concept | What it is |
+|---------|-----------|
+| **Worker** | A named agent with a specific role. Runs in its own isolated directory. |
+| **Group** | A workspace for sharing workers among team members. |
+| **Node** | A machine that runs workers. The server is always a node. Others join via `b0 node join`. |
+| **Skill** | Instructions installed into your agent (Claude/Codex) that teach it how to use Box0. |
 
-# Machine B: join as a worker node
-b0 node join http://machine-a:8080 --name gpu-box --key <key>
+## Learn more
 
-# Machine A: add worker on the remote node
-b0 worker add ml-agent --instructions "ML specialist." --node gpu-box
-b0 delegate ml-agent "Analyze this dataset."
-b0 wait
-```
-
-The task is routed to Machine B. Claude CLI runs there, using Machine B's credentials and compute. Only the node owner can deploy workers to their machine.
+- [Multi-machine setup](docs/multi-machine.md) — distribute workers across machines
+- [Teams](docs/teams.md) — share a Box0 server with multiple users
+- [Architecture](docs/architecture.md) — task flow, data model, and detailed diagrams
+- [CLI reference](docs/cli.md) — full command reference including agent-facing commands
 
 ## Web dashboard
 
-Box0 includes a built-in web dashboard. Open your browser to the server URL (e.g., `http://localhost:8080`) and log in with your API key.
-
-The dashboard lets you:
-- **Workers**: list, add, remove, start/stop, view instructions and logs
-- **Tasks**: view pending tasks, browse thread history and message details
-- **Nodes**: see all nodes, their status, and which workers run on each
-- **Team**: manage groups, invite users, add members (admin)
-
-No separate install. The dashboard is served directly by the Box0 server.
-
-## CLI reference
-
-```
-b0 server [--host] [--port] [--db]         Start server
-b0 login <url> --key <key>                 Connect from another machine
-b0 logout                                  Disconnect
-b0 reset                                   Clean slate
-b0 status                                  Show connection info
-b0 invite <name>                           Create user (admin only)
-
-b0 worker add <name> --instructions "..." [--description "..."] [--group <g>] [--node <n>] [--runtime auto|claude|codex]
-b0 worker ls [--group <g>]
-b0 worker info / update / stop / start / logs / remove [--group <g>] <name>
-b0 worker temp "<task>" [--group <g>]      One-off task (non-blocking)
-
-b0 delegate <worker> "<task>" [--group <g>]       New task (non-blocking)
-b0 delegate --thread <id> <worker> "<message>"    Continue conversation
-b0 delegate <worker>                              Read task from stdin
-b0 wait                                           Collect results
-b0 reply [--group <g>] <thread-id> "<answer>"     Answer a worker question
-
-b0 node join <url> [--name] [--key]        Join as worker node
-b0 node ls                                 List nodes
-
-b0 group create <name>                     Create group
-b0 group ls                                List your groups
-b0 group add-member <group> <user-id>      Add user to group
-
-b0 skill install claude-code / codex       Install agent skill
-b0 skill uninstall <agent>                 Remove
-b0 skill show                              Print to stdout
-```
+Open your browser to the server URL (default `http://localhost:8080`) and log in with your API key. Manage workers, view tasks, monitor nodes, and manage your team from the UI.
 
 ## License
 
