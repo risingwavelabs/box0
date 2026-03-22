@@ -1,0 +1,20 @@
+{
+  "name": "box0",
+  "version": "0.1.0",
+  "description": "Multi-agent platform for AI workers",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/risingwavelabs/box0"
+  },
+  "bin": {
+    "b0": "bin/b0.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "bin/",
+    "install.js"
+  ]
+}
