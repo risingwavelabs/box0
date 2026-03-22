@@ -60,6 +60,8 @@ struct InboxQuery {
 #[derive(Deserialize)]
 struct RegisterWorkerRequest {
     name: String,
+    #[serde(default)]
+    description: String,
     instructions: String,
     #[serde(default = "default_node_id")]
     node_id: String,
@@ -297,7 +299,7 @@ async fn register_worker_handler(
         }
     }
 
-    match state.db.register_worker(&group_name, &req.name, &req.instructions, &req.node_id, &caller.user.id) {
+    match state.db.register_worker(&group_name, &req.name, &req.description, &req.instructions, &req.node_id, &caller.user.id) {
         Ok(worker) => (StatusCode::CREATED, Json(serde_json::to_value(worker).unwrap())).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -531,6 +533,7 @@ pub async fn run(config: ServerConfig) {
             let mut cli_cfg = crate::config::CliConfig::load();
             cli_cfg.server_url = format!("http://127.0.0.1:{}", config.port);
             cli_cfg.api_key = Some(key.clone());
+            cli_cfg.default_group = Some(user.name.clone());
             let _ = cli_cfg.lead_id(); // generate lead_id
             if let Err(e) = cli_cfg.save() {
                 tracing::warn!("Failed to auto-configure CLI: {}", e);

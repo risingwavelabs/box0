@@ -92,6 +92,8 @@ pub struct CliConfig {
     pub lead_id: Option<String>,
     #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub default_group: Option<String>,
 }
 
 fn default_server_url() -> String {
@@ -104,6 +106,7 @@ impl Default for CliConfig {
             server_url: default_server_url(),
             lead_id: None,
             api_key: None,
+            default_group: None,
         }
     }
 }
@@ -189,12 +192,11 @@ r#"# Box0 (`b0`) Agent Delegation
 You have access to a team of specialized AI workers managed by Box0.
 The server is at: {server_url}
 
-## When to delegate
+## When to use
 
-When the user's request matches a worker's expertise, delegate instead of doing it yourself.
-Examples: "review this PR", "check for security issues", "write tests", "update the docs".
+When the user's request could benefit from specialized workers or parallel execution, delegate.
 
-Run `b0 worker ls` to see available workers and their specializations.
+First, run `b0 worker ls` to see available workers and their descriptions. Match workers to the task automatically. You do not need the user to name specific workers.
 
 ## Commands
 
@@ -261,9 +263,12 @@ If a worker asks a question during `b0 wait`, you'll see it. Use `b0 reply <thre
 r#"---
 name: b0
 description: |
-  Delegate tasks to specialized AI workers via Box0.
-  Use when the user asks to review code, check security, run tests,
-  or any task that matches a registered worker's expertise.
+  Delegate tasks to AI workers via Box0. Use when the user asks to
+  review code, check security, run tests, compare tools, get multiple
+  perspectives, research a topic, analyze data, write docs, or any
+  task that could benefit from specialized or parallel execution.
+  Also use when the user mentions worker names or says "ask", "delegate",
+  "get opinions from", or "have someone".
 allowed-tools:
   - Bash
 ---

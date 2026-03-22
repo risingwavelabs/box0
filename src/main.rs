@@ -58,7 +58,7 @@ enum Command {
     Delegate {
         /// Group name
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         /// Worker name
         worker: String,
         /// Task (omit to read from stdin)
@@ -70,7 +70,7 @@ enum Command {
     Reply {
         /// Group name
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         thread_id: String,
         message: String,
     },
@@ -88,8 +88,10 @@ enum Command {
 enum WorkerCommand {
     Add {
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         name: String,
+        #[arg(long, default_value = "")]
+        description: String,
         #[arg(long)]
         instructions: String,
         #[arg(long, default_value = "local")]
@@ -97,43 +99,43 @@ enum WorkerCommand {
     },
     Ls {
         #[arg(long)]
-        group: String,
+        group: Option<String>,
     },
     Info {
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         name: String,
     },
     Update {
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         name: String,
         #[arg(long)]
         instructions: String,
     },
     Remove {
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         name: String,
     },
     Stop {
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         name: String,
     },
     Start {
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         name: String,
     },
     Logs {
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         name: String,
     },
     Temp {
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         task: String,
         #[arg(long, default_value = "You are a helpful assistant. Complete the task. Be concise.")]
         instructions: String,
@@ -157,7 +159,7 @@ enum GroupCommand {
     Create { name: String },
     Ls,
     AddMember {
-        group: String,
+        group: Option<String>,
         user_id: String,
     },
 }
@@ -174,6 +176,19 @@ fn make_client(cfg: &config::CliConfig) -> client::BhClient {
         Some(key) => client::BhClient::with_api_key(&cfg.server_url(), key),
         None => client::BhClient::new(&cfg.server_url()),
     }
+}
+
+/// Resolve the group: use explicit --group, or fall back to default_group in config.
+fn resolve_group(explicit: Option<String>) -> String {
+    if let Some(g) = explicit {
+        return g;
+    }
+    let cfg = config::CliConfig::load();
+    if let Some(g) = cfg.default_group {
+        return g;
+    }
+    eprintln!("Error: --group is required. Set a default with: b0 group switch <name>");
+    std::process::exit(1);
 }
 
 #[tokio::main]
@@ -204,15 +219,15 @@ async fn main() {
         Command::Invite { name } => cmd_invite(&name).await,
 
         Command::Worker { command } => match command {
-            WorkerCommand::Add { group, name, instructions, node } => {
+            WorkerCommand::Add { group, name, description, instructions, node } => { let group = resolve_group(group);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.register_worker(&group, &name, &instructions, &node).await {
+                match client.register_worker(&group, &name, &description, &instructions, &node).await {
                     Ok(w) => println!("Worker \"{}\" registered in group \"{}\" on node \"{}\".", w.name, group, w.node_id),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Ls { group } => {
+            WorkerCommand::Ls { group } => { let group = resolve_group(group);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
                 match client.list_workers(&group).await {
@@ -220,16 +235,16 @@ async fn main() {
                         if workers.is_empty() {
                             println!("No workers in group \"{}\".", group);
                         } else {
-                            println!("{:<20} {:<10} {:<10} {}", "NAME", "NODE", "STATUS", "CREATED");
+                            println!("{:<20} {:<30} {:<10} {:<10} {}", "NAME", "DESCRIPTION", "NODE", "STATUS", "CREATED");
                             for w in workers {
-                                println!("{:<20} {:<10} {:<10} {}", w.name, w.node_id, w.status, w.created_at.format("%Y-%m-%d %H:%M:%S"));
+                                println!("{:<20} {:<30} {:<10} {:<10} {}", w.name, w.description, w.node_id, w.status, w.created_at.format("%Y-%m-%d %H:%M:%S"));
                             }
                         }
                     }
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Info { group, name } => {
+            WorkerCommand::Info { group, name } => { let group = resolve_group(group);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
                 match client.get_worker(&group, &name).await {
@@ -245,7 +260,7 @@ async fn main() {
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Update { group, name, instructions } => {
+            WorkerCommand::Update { group, name, instructions } => { let group = resolve_group(group);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
                 match client.update_worker(&group, &name, &instructions).await {
@@ -253,7 +268,7 @@ async fn main() {
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Remove { group, name } => {
+            WorkerCommand::Remove { group, name } => { let group = resolve_group(group);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
                 match client.remove_worker(&group, &name).await {
@@ -261,7 +276,7 @@ async fn main() {
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Stop { group, name } => {
+            WorkerCommand::Stop { group, name } => { let group = resolve_group(group);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
                 match client.stop_worker(&group, &name).await {
@@ -269,7 +284,7 @@ async fn main() {
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Start { group, name } => {
+            WorkerCommand::Start { group, name } => { let group = resolve_group(group);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
                 match client.start_worker(&group, &name).await {
@@ -277,7 +292,7 @@ async fn main() {
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Logs { group, name } => {
+            WorkerCommand::Logs { group, name } => { let group = resolve_group(group);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
                 match client.worker_logs(&group, &name).await {
@@ -294,7 +309,7 @@ async fn main() {
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Temp { group, task, instructions } => {
+            WorkerCommand::Temp { group, task, instructions } => { let group = resolve_group(group);
                 cmd_worker_temp(&group, &task, &instructions).await;
             }
         },
@@ -347,7 +362,7 @@ async fn main() {
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            GroupCommand::AddMember { group, user_id } => {
+            GroupCommand::AddMember { group, user_id } => { let group = resolve_group(group);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
                 match client.add_group_member(&group, &user_id).await {
@@ -386,7 +401,7 @@ async fn main() {
             }
         },
 
-        Command::Delegate { group, worker, task } => {
+        Command::Delegate { group, worker, task } => { let group = resolve_group(group);
             let task_content = match task {
                 Some(t) => t,
                 None => {
@@ -401,7 +416,7 @@ async fn main() {
 
         Command::Wait => cmd_wait().await,
 
-        Command::Reply { group, thread_id, message } => {
+        Command::Reply { group, thread_id, message } => { let group = resolve_group(group);
             cmd_reply(&group, &thread_id, &message).await;
         }
     }
@@ -500,7 +515,7 @@ async fn cmd_worker_temp(group: &str, task: &str, instructions: &str) {
     let client = make_client(&cfg);
 
     let temp_name = format!("temp-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    if let Err(e) = client.register_worker(group, &temp_name, instructions, "local").await {
+    if let Err(e) = client.register_worker(group, &temp_name, "", instructions, "local").await {
         eprintln!("Error: {}", e); std::process::exit(1);
     }
 
