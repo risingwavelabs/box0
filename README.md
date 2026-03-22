@@ -12,7 +12,8 @@ There is no standard way to run multiple agents as a team, split work between th
 
 Box0 provides the infrastructure to:
 
-- **Run multiple agents in parallel.** Define agents with different instructions. They execute concurrently, each as a separate process.
+- **Run multiple agents in parallel.** Define agents with different instructions. They execute concurrently, each in its own isolated workspace.
+- **Multi-turn conversations.** Continue a conversation with a worker across multiple rounds using `--thread`. The worker remembers all previous turns.
 - **Distribute across machines.** Agents can run on your laptop, a GPU server, or any machine. Box0 routes tasks by name. Each machine uses its own local credentials.
 - **Integrate with existing tools.** Claude Code and Codex can learn to use Box0 automatically through skill installation. No workflow changes required.
 - **Isolate teams.** Groups provide workspace isolation. Multiple users or teams share one Box0 server without seeing each other's agents or data.
@@ -40,18 +41,18 @@ On first start, Box0 creates an admin user with a personal group called "admin" 
 
 ### 2. Create workers
 
-The admin user has a personal group called "admin". Create workers in it:
-
 ```bash
-b0 worker add --group admin ux-expert \
+b0 worker add ux-expert --description "UX researcher" \
   --instructions "You are a UX researcher. Evaluate developer tools from the perspective of daily workflow, ergonomics, and productivity."
 
-b0 worker add --group admin architect \
+b0 worker add architect --description "Software architect" \
   --instructions "You are a software architect. Evaluate tools from the perspective of technical capabilities, extensibility, and system design."
 
-b0 worker add --group admin pragmatist \
+b0 worker add pragmatist --description "Pragmatic tech lead" \
   --instructions "You are a pragmatic tech lead. Cut through hype. Evaluate based on what actually ships faster with fewer bugs."
 ```
+
+When `--group` is omitted, the default group (set during server setup) is used.
 
 ### 3. Install the skill for Claude Code (or Codex)
 
@@ -77,6 +78,23 @@ Open Claude Code (or Codex) and say something like:
 
 Claude Code automatically calls `b0 delegate` for each worker, runs `b0 wait` to collect the results, and synthesizes a conclusion. Three agents, three perspectives, one answer.
 
+## Multi-turn conversations
+
+Continue a conversation with a worker by passing `--thread`:
+
+```bash
+b0 delegate debater "Argue that Python is the best language."
+```
+
+This prints a thread ID (e.g. `thread-abc123`). After collecting the result with `b0 wait`, continue the conversation:
+
+```bash
+b0 delegate --thread thread-abc123 debater "I disagree. Rust is better for safety. Counter my argument."
+b0 wait
+```
+
+The worker remembers everything from previous turns. Each follow-up builds on the full conversation history.
+
 ## Adding team members
 
 On the server machine (admin):
@@ -101,7 +119,7 @@ Each user has their own key. Users can be in multiple groups. Workers in a group
 ## How it works
 
 ```
-Your agent (lead)          Box0 Server              Worker nodes
+Your agent               Box0 Server              Worker nodes
      |                         |                        |
      |  b0 delegate reviewer   |                        |
      |  ---------------------->  stores in inbox         |
@@ -110,21 +128,22 @@ Your agent (lead)          Box0 Server              Worker nodes
      |                         |                        |
      |                         |   daemon polls inboxes  |
      |                         |   spawns claude CLI     |
+     |                         |   in worker's own dir   |
      |                         |   <-------- results     |
      |  b0 wait                |                        |
      |  <----------------------  delivers results        |
 ```
 
-Workers are not long-running processes. When a task arrives, the node daemon spawns `claude --print --output-format json --system-prompt "<instructions>"` as a subprocess. The task is piped via stdin. When done, the result goes back through the inbox to whoever delegated it.
+Each worker runs in its own isolated directory under `workers/<name>/`. When a task arrives, the node daemon spawns `claude --print --output-format json --system-prompt "<instructions>"` as a subprocess in that directory. The task is piped via stdin. When done, the result goes back through the inbox.
+
+For multi-turn conversations, the daemon stores the Claude session ID and uses `--resume` on follow-up messages, preserving the full conversation history.
 
 Workers use the machine's existing authentication (OAuth or API key). No special credential setup needed.
 
 ## One-off tasks
 
-Don't want to create a named worker? Use `worker temp`:
-
 ```bash
-b0 worker temp --group admin "Summarize the top 5 differences between Rust and Go."
+b0 worker temp "Summarize the top 5 differences between Rust and Go."
 b0 wait
 ```
 
@@ -132,18 +151,16 @@ Creates a temporary worker, runs the task, auto-cleans up.
 
 ## Multi-machine
 
-Run workers on different machines:
-
 ```bash
 # Machine A: start server
 b0 server
 
-# Machine B: join as a worker node (using your key)
-b0 node join http://machine-a:8080 --name gpu-box --key b0_abc123...
+# Machine B: join as a worker node
+b0 node join http://machine-a:8080 --name gpu-box --key <key>
 
 # Machine A: add worker on the remote node
-b0 worker add --group admin ml-agent --instructions "ML specialist." --node gpu-box
-b0 delegate --group admin ml-agent "Analyze this dataset."
+b0 worker add ml-agent --instructions "ML specialist." --node gpu-box
+b0 delegate ml-agent "Analyze this dataset."
 b0 wait
 ```
 
@@ -152,33 +169,34 @@ The task is routed to Machine B. Claude CLI runs there, using Machine B's creden
 ## CLI reference
 
 ```
-b0 server [--host] [--port] [--db]       Start server
-b0 login <url> --key <key>               Connect from another machine
-b0 logout                                Disconnect
-b0 reset                                 Clean slate
-b0 status                                Show connection info
-b0 invite <name>                         Create user (admin only)
+b0 server [--host] [--port] [--db]         Start server
+b0 login <url> --key <key>                 Connect from another machine
+b0 logout                                  Disconnect
+b0 reset                                   Clean slate
+b0 status                                  Show connection info
+b0 invite <name>                           Create user (admin only)
 
-b0 worker add --group <g> <name> --instructions "..." [--node <n>]
-b0 worker ls --group <g>
-b0 worker info / update / stop / start / logs / remove --group <g> <name>
-b0 worker temp --group <g> "<task>"      One-off task (non-blocking)
+b0 worker add <name> --instructions "..." [--description "..."] [--group <g>] [--node <n>]
+b0 worker ls [--group <g>]
+b0 worker info / update / stop / start / logs / remove [--group <g>] <name>
+b0 worker temp "<task>" [--group <g>]      One-off task (non-blocking)
 
-b0 delegate --group <g> <worker> "<task>"   Send task (non-blocking)
-b0 delegate --group <g> <worker>            Read task from stdin
-b0 wait                                     Collect results
-b0 reply --group <g> <thread-id> "<answer>" Answer a worker's question
+b0 delegate <worker> "<task>" [--group <g>]       New task (non-blocking)
+b0 delegate --thread <id> <worker> "<message>"    Continue conversation
+b0 delegate <worker>                              Read task from stdin
+b0 wait                                           Collect results
+b0 reply [--group <g>] <thread-id> "<answer>"     Answer a worker question
 
-b0 node join <url> [--name] [--key]      Join as worker node
-b0 node ls                               List nodes
+b0 node join <url> [--name] [--key]        Join as worker node
+b0 node ls                                 List nodes
 
-b0 group create <name>                   Create group
-b0 group ls                              List your groups
-b0 group add-member <group> <user-id>    Add user to group
+b0 group create <name>                     Create group
+b0 group ls                                List your groups
+b0 group add-member <group> <user-id>      Add user to group
 
-b0 skill install claude-code / codex     Install agent skill
-b0 skill uninstall <agent>               Remove
-b0 skill show                            Print to stdout
+b0 skill install claude-code / codex       Install agent skill
+b0 skill uninstall <agent>                 Remove
+b0 skill show                              Print to stdout
 ```
 
 ## License

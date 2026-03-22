@@ -201,8 +201,11 @@ First, run `b0 worker ls` to see available workers and their descriptions. Match
 ## Commands
 
 ```bash
-# Delegate a task (non-blocking, returns immediately)
+# Delegate a task (non-blocking, returns immediately with thread ID)
 b0 delegate <worker> "<detailed task prompt>"
+
+# Continue a conversation with the same worker
+b0 delegate --thread <thread-id> <worker> "<follow-up message>"
 
 # Wait for results
 b0 wait
@@ -210,13 +213,8 @@ b0 wait
 # Quick one-off task (no named worker needed)
 b0 worker temp "<task>"
 
-# Reply to a worker's question
-b0 reply <thread-id> "<answer>"
-
-# Manage workers
+# List available workers
 b0 worker ls
-b0 worker add <name> --instructions "..."
-b0 worker remove <name>
 ```
 
 ## How to write delegation prompts
@@ -226,9 +224,6 @@ Do NOT just forward the user's words. Compose a complete, actionable prompt:
 1. **Gather context**: which repo, branch, files, what changed
 2. **Be specific**: include file paths, line numbers, relevant details
 3. **State the goal**: what the worker should produce
-
-Bad: "review this PR"
-Good: "Review the changes on branch feature-timeout in this repo. The PR adds timeout handling to src/handler.rs. Focus on correctness and edge cases. Cite line numbers."
 
 ## Concurrent tasks
 
@@ -240,11 +235,16 @@ b0 delegate security "Check src/handler.rs for security vulnerabilities..."
 b0 wait
 ```
 
-`b0 wait` blocks and streams results as workers complete.
+## Multi-turn conversations
 
-## Worker questions
+To continue a conversation with a worker, pass the thread ID from the first round:
 
-If a worker asks a question during `b0 wait`, you'll see it. Use `b0 reply <thread-id> "<answer>"` to respond. The worker will continue after receiving your answer.
+```bash
+b0 delegate --thread <thread-id> <worker> "<follow-up>"
+b0 wait
+```
+
+The worker remembers all previous turns in the conversation.
 "#,
             server_url = server_url
         )
