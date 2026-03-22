@@ -49,6 +49,11 @@ enum Command {
         #[command(subcommand)]
         command: SkillCommand,
     },
+    /// Schedule recurring tasks
+    Cron {
+        #[command(subcommand)]
+        command: CronCommand,
+    },
     /// Delegate a task to a worker
     Delegate {
         /// Group name
@@ -170,6 +175,46 @@ enum SkillCommand {
     Show,
     Install { agent: String },
     Uninstall { agent: String },
+}
+
+#[derive(Subcommand)]
+enum CronCommand {
+    /// Schedule a recurring task
+    Add {
+        #[arg(long)]
+        group: Option<String>,
+        /// Worker name
+        worker: String,
+        /// Schedule: 30s, 5m, 1h, 6h, 1d
+        #[arg(long)]
+        every: String,
+        /// Task to run
+        task: String,
+    },
+    /// List scheduled tasks
+    Ls {
+        #[arg(long)]
+        group: Option<String>,
+    },
+    /// Remove a scheduled task
+    Remove {
+        #[arg(long)]
+        group: Option<String>,
+        /// Cron job ID
+        id: String,
+    },
+    /// Enable a scheduled task
+    Enable {
+        #[arg(long)]
+        group: Option<String>,
+        id: String,
+    },
+    /// Disable a scheduled task
+    Disable {
+        #[arg(long)]
+        group: Option<String>,
+        id: String,
+    },
 }
 
 fn make_client(cfg: &config::CliConfig) -> client::BhClient {
@@ -399,6 +444,60 @@ async fn main() {
                     "claude-code" => { let _ = config::CliConfig::uninstall_skill_claude_code(); println!("Skill uninstalled for Claude Code."); }
                     "codex" => { let _ = config::CliConfig::uninstall_skill_codex(); println!("Skill uninstalled for Codex."); }
                     _ => { eprintln!("Unknown agent: {}. Supported: claude-code, codex", agent); std::process::exit(1); }
+                }
+            }
+        },
+
+        Command::Cron { command } => match command {
+            CronCommand::Add { group, worker, every, task } => { let group = resolve_group(group);
+                let cfg = config::CliConfig::load();
+                let client = make_client(&cfg);
+                match client.create_cron_job(&group, &worker, &every, &task).await {
+                    Ok(job) => println!("Cron job \"{}\" created. Worker \"{}\" will run every {}.", job.id, worker, every),
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                }
+            }
+            CronCommand::Ls { group } => { let group = resolve_group(group);
+                let cfg = config::CliConfig::load();
+                let client = make_client(&cfg);
+                match client.list_cron_jobs(&group).await {
+                    Ok(jobs) => {
+                        if jobs.is_empty() {
+                            println!("No scheduled tasks in group \"{}\".", group);
+                        } else {
+                            println!("{:<16} {:<16} {:<10} {:<8} {:<20} {}", "ID", "WORKER", "SCHEDULE", "ENABLED", "LAST RUN", "TASK");
+                            for j in jobs {
+                                let last = j.last_run.map(|t| t.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| "never".to_string());
+                                let task_preview: String = j.task.chars().take(40).collect();
+                                println!("{:<16} {:<16} {:<10} {:<8} {:<20} {}", j.id, j.worker, j.schedule, j.enabled, last, task_preview);
+                            }
+                        }
+                    }
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                }
+            }
+            CronCommand::Remove { group, id } => { let group = resolve_group(group);
+                let cfg = config::CliConfig::load();
+                let client = make_client(&cfg);
+                match client.remove_cron_job(&group, &id).await {
+                    Ok(()) => println!("Cron job \"{}\" removed.", id),
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                }
+            }
+            CronCommand::Enable { group, id } => { let group = resolve_group(group);
+                let cfg = config::CliConfig::load();
+                let client = make_client(&cfg);
+                match client.set_cron_enabled(&group, &id, true).await {
+                    Ok(()) => println!("Cron job \"{}\" enabled.", id),
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                }
+            }
+            CronCommand::Disable { group, id } => { let group = resolve_group(group);
+                let cfg = config::CliConfig::load();
+                let client = make_client(&cfg);
+                match client.set_cron_enabled(&group, &id, false).await {
+                    Ok(()) => println!("Cron job \"{}\" disabled.", id),
+                    Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
         },

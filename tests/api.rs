@@ -283,3 +283,57 @@ async fn test_nodes() {
     // Heartbeat
     client.heartbeat_node("gpu-box").await.unwrap();
 }
+
+#[tokio::test]
+async fn test_cron_crud() {
+    let (url, key, _tmp) = start_test_server().await;
+    let client = admin_client(&url, &key);
+
+    // Create a worker first
+    client
+        .register_worker("admin", "seo-worker", "SEO checker", "Check SEO.", "local", "auto")
+        .await
+        .unwrap();
+
+    // Create cron job
+    let job = client.create_cron_job("admin", "seo-worker", "6h", "Check the website SEO").await.unwrap();
+    assert!(job.id.starts_with("cron-"));
+    assert_eq!(job.worker, "seo-worker");
+    assert_eq!(job.schedule, "6h");
+    assert!(job.enabled);
+
+    // List
+    let jobs = client.list_cron_jobs("admin").await.unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].id, job.id);
+
+    // Disable
+    client.set_cron_enabled("admin", &job.id, false).await.unwrap();
+    let jobs = client.list_cron_jobs("admin").await.unwrap();
+    assert!(!jobs[0].enabled);
+
+    // Enable
+    client.set_cron_enabled("admin", &job.id, true).await.unwrap();
+    let jobs = client.list_cron_jobs("admin").await.unwrap();
+    assert!(jobs[0].enabled);
+
+    // Remove
+    client.remove_cron_job("admin", &job.id).await.unwrap();
+    let jobs = client.list_cron_jobs("admin").await.unwrap();
+    assert_eq!(jobs.len(), 0);
+}
+
+#[tokio::test]
+async fn test_cron_invalid_schedule() {
+    let (url, key, _tmp) = start_test_server().await;
+    let client = admin_client(&url, &key);
+
+    client
+        .register_worker("admin", "worker", "", "Do stuff.", "local", "auto")
+        .await
+        .unwrap();
+
+    // Invalid schedule should fail
+    let result = client.create_cron_job("admin", "worker", "invalid", "task").await;
+    assert!(result.is_err());
+}

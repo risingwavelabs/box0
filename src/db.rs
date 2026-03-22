@@ -69,6 +69,19 @@ pub struct Node {
     pub last_heartbeat: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronJob {
+    pub id: String,
+    pub group_name: String,
+    pub worker: String,
+    pub schedule: String,
+    pub task: String,
+    pub enabled: bool,
+    pub last_run: Option<DateTime<Utc>>,
+    pub created_by: String,
+    pub created_at: DateTime<Utc>,
+}
+
 impl Database {
     pub fn new(path: &str) -> Result<Self> {
         let conn =
@@ -153,6 +166,18 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_inbox_group_to_status ON inbox_messages(group_name, to_agent, status);
             CREATE INDEX IF NOT EXISTS idx_inbox_group_thread ON inbox_messages(group_name, thread_id);
+
+            CREATE TABLE IF NOT EXISTS cron_jobs (
+                id TEXT PRIMARY KEY,
+                group_name TEXT NOT NULL,
+                worker TEXT NOT NULL,
+                schedule TEXT NOT NULL,
+                task TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                last_run TEXT,
+                created_by TEXT NOT NULL,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
             ",
         )?;
         Ok(())
@@ -826,6 +851,128 @@ impl Database {
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(messages)
+    }
+
+    // --- Cron Jobs ---
+
+    pub fn create_cron_job(
+        &self,
+        group_name: &str,
+        worker: &str,
+        schedule: &str,
+        task: &str,
+        created_by: &str,
+    ) -> Result<CronJob> {
+        let conn = self.conn.lock().unwrap();
+        let id = format!("cron-{}", &Uuid::new_v4().to_string()[..8]);
+        conn.execute(
+            "INSERT INTO cron_jobs (id, group_name, worker, schedule, task, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, group_name, worker, schedule, task, created_by],
+        )?;
+        Ok(CronJob {
+            id,
+            group_name: group_name.to_string(),
+            worker: worker.to_string(),
+            schedule: schedule.to_string(),
+            task: task.to_string(),
+            enabled: true,
+            last_run: None,
+            created_by: created_by.to_string(),
+            created_at: Utc::now(),
+        })
+    }
+
+    pub fn list_cron_jobs(&self, group_name: &str) -> Result<Vec<CronJob>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, group_name, worker, schedule, task, enabled, last_run, created_by, created_at
+             FROM cron_jobs WHERE group_name = ?1 ORDER BY created_at",
+        )?;
+        let jobs = stmt
+            .query_map(params![group_name], |row| {
+                let last_run_str: Option<String> = row.get(6)?;
+                let ts: String = row.get(8)?;
+                let enabled: i32 = row.get(5)?;
+                Ok(CronJob {
+                    id: row.get(0)?,
+                    group_name: row.get(1)?,
+                    worker: row.get(2)?,
+                    schedule: row.get(3)?,
+                    task: row.get(4)?,
+                    enabled: enabled != 0,
+                    last_run: last_run_str.map(|s| Database::parse_ts(&s)),
+                    created_by: row.get(7)?,
+                    created_at: Database::parse_ts(&ts),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(jobs)
+    }
+
+    pub fn get_all_enabled_cron_jobs(&self) -> Result<Vec<CronJob>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, group_name, worker, schedule, task, enabled, last_run, created_by, created_at
+             FROM cron_jobs WHERE enabled = 1",
+        )?;
+        let jobs = stmt
+            .query_map([], |row| {
+                let last_run_str: Option<String> = row.get(6)?;
+                let ts: String = row.get(8)?;
+                Ok(CronJob {
+                    id: row.get(0)?,
+                    group_name: row.get(1)?,
+                    worker: row.get(2)?,
+                    schedule: row.get(3)?,
+                    task: row.get(4)?,
+                    enabled: true,
+                    last_run: last_run_str.map(|s| Database::parse_ts(&s)),
+                    created_by: row.get(7)?,
+                    created_at: Database::parse_ts(&ts),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(jobs)
+    }
+
+    pub fn remove_cron_job(&self, group_name: &str, cron_id: &str, user_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let creator: Option<String> = conn
+            .query_row(
+                "SELECT created_by FROM cron_jobs WHERE id = ?1 AND group_name = ?2",
+                params![cron_id, group_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match creator {
+            Some(c) if c == user_id => {}
+            Some(_) => anyhow::bail!("only the creator can remove this cron job"),
+            None => anyhow::bail!("cron job not found"),
+        }
+        conn.execute(
+            "DELETE FROM cron_jobs WHERE id = ?1 AND group_name = ?2",
+            params![cron_id, group_name],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_cron_enabled(&self, group_name: &str, cron_id: &str, enabled: bool) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE cron_jobs SET enabled = ?1 WHERE id = ?2 AND group_name = ?3",
+            params![enabled as i32, cron_id, group_name],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_cron_last_run(&self, cron_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        conn.execute(
+            "UPDATE cron_jobs SET last_run = ?1 WHERE id = ?2",
+            params![now, cron_id],
+        )?;
+        Ok(())
     }
 }
 

@@ -254,4 +254,35 @@ impl BhClient {
         let resp = self.request(req).await?;
         Ok(resp.json().await?)
     }
+
+    // --- Cron Jobs ---
+
+    pub async fn create_cron_job(&self, group: &str, worker: &str, schedule: &str, task: &str) -> Result<crate::db::CronJob> {
+        let req = self.client
+            .post(format!("{}/groups/{}/cron", self.base_url, group))
+            .json(&serde_json::json!({"worker": worker, "schedule": schedule, "task": task}));
+        let resp = self.request(req).await?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn list_cron_jobs(&self, group: &str) -> Result<Vec<crate::db::CronJob>> {
+        let req = self.client.get(format!("{}/groups/{}/cron", self.base_url, group));
+        let resp = self.request(req).await?;
+        let body: serde_json::Value = resp.json().await?;
+        Ok(serde_json::from_value(body["cron_jobs"].clone()).unwrap_or_default())
+    }
+
+    pub async fn remove_cron_job(&self, group: &str, cron_id: &str) -> Result<()> {
+        let req = self.client.delete(format!("{}/groups/{}/cron/{}", self.base_url, group, cron_id));
+        self.request(req).await?;
+        Ok(())
+    }
+
+    pub async fn set_cron_enabled(&self, group: &str, cron_id: &str, enabled: bool) -> Result<()> {
+        let req = self.client
+            .put(format!("{}/groups/{}/cron/{}", self.base_url, group, cron_id))
+            .json(&serde_json::json!({"enabled": enabled}));
+        self.request(req).await?;
+        Ok(())
+    }
 }

@@ -213,6 +213,9 @@ b0 wait                                                # collect all pending res
 b0 reply <thread-id> "<answer>"                        # answer a worker's question
 b0 status                                              # check pending tasks
 b0 worker temp "<task>"                                # one-off task, no named worker
+b0 cron add <worker> --every <interval> "<task>"       # schedule recurring task (30s/5m/1h/6h/1d)
+b0 cron ls                                             # list scheduled tasks
+b0 cron remove <id>                                    # remove a scheduled task
 ```
 
 ## How to write delegation prompts

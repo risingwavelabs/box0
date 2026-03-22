@@ -505,6 +505,85 @@ async fn add_to_group_handler(
     }
 }
 
+// --- Handlers: Cron Jobs ---
+
+#[derive(Deserialize)]
+struct CreateCronRequest {
+    worker: String,
+    schedule: String,
+    task: String,
+}
+
+#[derive(Deserialize)]
+struct UpdateCronRequest {
+    #[serde(default)]
+    enabled: Option<bool>,
+}
+
+async fn create_cron_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path(group_name): Path<String>,
+    Json(req): Json<CreateCronRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+        return e;
+    }
+    // Validate schedule
+    if crate::scheduler::parse_schedule_secs(&req.schedule).is_none() {
+        return error_response(StatusCode::BAD_REQUEST, "invalid schedule. Use: 30s, 5m, 1h, 6h, 1d");
+    }
+    match state.db.create_cron_job(&group_name, &req.worker, &req.schedule, &req.task, &caller.user.id) {
+        Ok(job) => (StatusCode::CREATED, Json(serde_json::to_value(job).unwrap())).into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn list_cron_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path(group_name): Path<String>,
+) -> impl IntoResponse {
+    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+        return e;
+    }
+    match state.db.list_cron_jobs(&group_name) {
+        Ok(jobs) => (StatusCode::OK, Json(serde_json::json!({"cron_jobs": jobs}))).into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn remove_cron_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path((group_name, cron_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+        return e;
+    }
+    match state.db.remove_cron_job(&group_name, &cron_id, &caller.user.id) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "removed"}))).into_response(),
+        Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+async fn update_cron_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path((group_name, cron_id)): Path<(String, String)>,
+    Json(req): Json<UpdateCronRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+        return e;
+    }
+    if let Some(enabled) = req.enabled {
+        if let Err(e) = state.db.set_cron_enabled(&group_name, &cron_id, enabled) {
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+        }
+    }
+    (StatusCode::OK, Json(serde_json::json!({"status": "updated"}))).into_response()
+}
+
 /// Returns all active workers on a node across all groups. Used by remote daemons.
 async fn node_workers_handler(
     State(state): State<SharedState>,
@@ -571,6 +650,11 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/nodes/{node_id}/workers", get(node_workers_handler))
         .route("/users", get(list_users_handler))
         .route("/users/invite", post(invite_user_handler))
+        // Cron jobs (group-scoped)
+        .route("/groups/{group_name}/cron",
+            get(list_cron_handler).post(create_cron_handler))
+        .route("/groups/{group_name}/cron/{cron_id}",
+            delete(remove_cron_handler).put(update_cron_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
     let web_dir = std::path::Path::new("web");
@@ -753,6 +837,12 @@ pub async fn run(config: ServerConfig) {
     let daemon_state = state.clone();
     tokio::spawn(async move {
         daemon::run_local(daemon_state, workspace_root).await;
+    });
+
+    // Spawn scheduler for cron jobs
+    let scheduler_state = state.clone();
+    tokio::spawn(async move {
+        crate::scheduler::run(scheduler_state).await;
     });
 
     let app = build_router(state);
