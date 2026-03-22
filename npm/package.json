@@ -1,5 +1,5 @@
 {
-  "name": "box0",
+  "name": "@box0/cli",
   "version": "0.1.0",
   "description": "Multi-agent platform for AI workers",
   "license": "MIT",
