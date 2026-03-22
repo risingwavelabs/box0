@@ -1,8 +1,8 @@
-# Boxhouse — Product Design
+# Box0 — Product Design
 
-**Boxhouse** (`bh`) — an agent platform.
+**Box0** (`b0`) — an agent platform.
 
-Boxhouse is a platform for deploying and managing specialized AI agents. It handles node management, worker scheduling, team isolation, and inter-agent communication.
+Box0 is a platform for deploying and managing specialized AI agents. It handles node management, worker scheduling, team isolation, and inter-agent communication.
 
 Users don't care how agents communicate. Users care about: I say one thing, a group of specialized agents do their jobs, and results come back.
 
@@ -13,7 +13,7 @@ Users don't care how agents communicate. Users care about: I say one thing, a gr
 | **Server** | Control plane. Message routing + worker scheduling | 1 |
 | **Node** | A machine that can run workers. Runs a daemon, takes orders from server | N |
 | **Worker** | An agent process running on a node, with specialized instructions | M |
-| **Lead** | The user's own Claude Code session (or any agent with shell access). Not managed by Boxhouse | — |
+| **Lead** | The user's own Claude Code session (or any agent with shell access). Not managed by Box0 | — |
 
 - Lead requires no configuration. It's just the user's current Claude Code session.
 - Worker specialization comes from the `instructions` field — declarative, each worker has different expertise.
@@ -24,9 +24,9 @@ Users don't care how agents communicate. Users care about: I say one thing, a gr
 ```
 User's laptop
 └── Claude Code (lead)
-         │  uses bh CLI via bash
+         │  uses b0 CLI via bash
          ▼
-   Boxhouse Server (control plane)
+   Box0 Server (control plane)
    ├── Message routing (inbox + threads)
    ├── Worker scheduling
    │
@@ -56,10 +56,10 @@ A named, persistent role on the team. Like hiring a full-time employee.
 - Anyone on the team can delegate work to it
 
 ```bash
-bh worker add reviewer \
+b0 worker add reviewer \
   --instructions "Senior code reviewer. Focus on correctness and edge cases. Cite line numbers."
 
-bh worker add marketer \
+b0 worker add marketer \
   --instructions "Growth marketer. Analyze campaigns and suggest optimizations."
 ```
 
@@ -75,8 +75,8 @@ A one-off task. Like hiring a temp/contractor.
 - Done when the task is done
 
 ```bash
-bh worker temp "look up AWS GPU pricing and summarize options"
-bh worker temp --node gpu-box "process this dataset"
+b0 worker temp "look up AWS GPU pricing and summarize options"
+b0 worker temp --node gpu-box "process this dataset"
 ```
 
 ## Worker implementation
@@ -84,20 +84,20 @@ bh worker temp --node gpu-box "process this dataset"
 Workers are **not** Claude Code instances with channels. Headless Claude Code cannot load MCP channels.
 
 A worker is a **daemon process** written by us. It does two things:
-1. Polls the Boxhouse inbox (HTTP long-polling)
+1. Polls the Box0 inbox (HTTP long-polling)
 2. When a task arrives, invokes an LLM (Claude Code CLI subprocess, or Anthropic API directly) to do the work
 
 Core loop:
 
 ```python
 while True:
-    messages = bh.receive(agent_id, status="unread", timeout=30)
+    messages = b0.receive(agent_id, status="unread", timeout=30)
     for msg in messages:
         if msg["type"] == "request":
             result = invoke_llm(msg["content"], instructions=worker_instructions)
-            bh.send(to=msg["from"], thread_id=msg["thread_id"],
+            b0.send(to=msg["from"], thread_id=msg["thread_id"],
                         type="done", content=result)
-        bh.ack(msg["id"])
+        b0.ack(msg["id"])
 ```
 
 The platform is runtime-agnostic. The daemon can invoke Claude Code, Codex, a Python script, or any LLM. For MVP, we support Claude Code CLI and direct Anthropic API calls.
@@ -122,11 +122,11 @@ Node requirements: whatever tools the worker might need should be installed on t
 
 ### Worker auth / LLM credentials
 
-Workers use whatever credentials are already on the node — OAuth first, API key as fallback. Same as the node's environment. No special credential management by Boxhouse, no usage tracking needed initially.
+Workers use whatever credentials are already on the node — OAuth first, API key as fallback. Same as the node's environment. No special credential management by Box0, no usage tracking needed initially.
 
 ### Worker output
 
-Workers return results through the Boxhouse inbox message. Output depends on the task type:
+Workers return results through the Box0 inbox message. Output depends on the task type:
 
 - **Analysis/review**: text result in the message content (findings, suggestions, summaries)
 - **Code modifications**: worker pushes to a branch, returns branch name/PR URL in the message
@@ -150,35 +150,35 @@ Check out the branch and focus on correctness and edge cases."
 
 Workers are not limited to coding. A marketer worker gets a delegation prompt about campaign data. A researcher worker gets a prompt about a topic to investigate. The instructions (CLAUDE.md) define WHO they are; the delegation prompt defines WHAT to do this time.
 
-**The skill is the product.** The skill installed by `bh skill install` must teach the agent how to write good delegation prompts — gathering context, including relevant information, composing actionable instructions. This is the core of the lead-side user experience.
+**The skill is the product.** The skill installed by `b0 skill install` must teach the agent how to write good delegation prompts — gathering context, including relevant information, composing actionable instructions. This is the core of the lead-side user experience.
 
 ## Lead implementation
 
-The lead is any agent with shell access. For MVP, we focus on Claude Code as the lead, but the design is runtime-agnostic — any agent that can run `bh` CLI commands can be a lead.
+The lead is any agent with shell access. For MVP, we focus on Claude Code as the lead, but the design is runtime-agnostic — any agent that can run `b0` CLI commands can be a lead.
 
 ### MVP: CLI-only (pull-based)
 
-The lead uses `bh` CLI via bash. No MCP, no channel.
+The lead uses `b0` CLI via bash. No MCP, no channel.
 
 ```bash
 # Send tasks (returns immediately, non-blocking)
-bh delegate reviewer "review this PR"        # → thread-abc
-bh delegate security "check for vulns"        # → thread-def
-bh delegate doc-writer "update the README"    # → thread-ghi
+b0 delegate reviewer "review this PR"        # → thread-abc
+b0 delegate security "check for vulns"        # → thread-def
+b0 delegate doc-writer "update the README"    # → thread-ghi
 
 # Wait for results (blocks, streams results as they arrive)
-bh wait
+b0 wait
 # reviewer done (47s): 2 issues found...
 # security done (52s): no vulnerabilities
 # doc-writer done (68s): README updated
 # All done.
 ```
 
-**How results arrive**: The lead must explicitly poll via `bh wait` or `bh status`. It cannot be notified passively.
+**How results arrive**: The lead must explicitly poll via `b0 wait` or `b0 status`. It cannot be notified passively.
 
-**Multi-task concurrency**: User fires off tasks 1, 2, 3 in rapid succession (all non-blocking). Results sit in inbox until the lead checks. The skill instructs Claude Code to run `bh status` before responding to new user messages, so it can proactively report completed tasks.
+**Multi-task concurrency**: User fires off tasks 1, 2, 3 in rapid succession (all non-blocking). Results sit in inbox until the lead checks. The skill instructs Claude Code to run `b0 status` before responding to new user messages, so it can proactively report completed tasks.
 
-**Multi-turn (worker asks a question)**: `bh wait` returns all pending events in a batch. The lead processes questions, runs `bh reply`, then calls `bh wait` again. Or: `bh orchestrate` command handles the event loop internally, only surfacing questions to the lead when human judgment is needed.
+**Multi-turn (worker asks a question)**: `b0 wait` returns all pending events in a batch. The lead processes questions, runs `b0 reply`, then calls `b0 wait` again. Or: `b0 orchestrate` command handles the event loop internally, only surfacing questions to the lead when human judgment is needed.
 
 **Pros**: Simple. Universal — any agent with shell access can be a lead. No MCP dependency.
 **Cons**: Pull-based. The lead cannot notice background task completions while processing user input. Relies on proactive polling.
@@ -188,43 +188,43 @@ bh wait
 Not in scope for MVP. Recorded here for future reference.
 
 The lead uses both:
-- **boxhouse-channel (MCP)**: receives push notifications (worker results, worker questions)
+- **box0-channel (MCP)**: receives push notifications (worker results, worker questions)
 - **bh CLI**: sends tasks (`delegate`), manages workers, etc.
 
 ```
 Lead (Claude Code)
-├── boxhouse-channel  → receive: worker results, worker questions (push)
-└── bh CLI      → send: delegate, reply, worker add (pull)
+├── box0-channel  → receive: worker results, worker questions (push)
+└── b0 CLI      → send: delegate, reply, worker add (pull)
 ```
 
-**How results arrive**: Boxhouse channel pushes notifications to the lead. When worker-1 finishes, the lead is immediately notified — even if the user is in the middle of a different conversation. The lead can interleave: "By the way, problem 1 is fixed. Now, about your current question..."
+**How results arrive**: Box0 channel pushes notifications to the lead. When worker-1 finishes, the lead is immediately notified — even if the user is in the middle of a different conversation. The lead can interleave: "By the way, problem 1 is fixed. Now, about your current question..."
 
 **Multi-task concurrency**: Fully async. User fires off tasks and continues working. Results arrive as push notifications through the channel. No polling needed.
 
-**Multi-turn (worker asks a question)**: Channel pushes the question to the lead. The lead sees it in context, reasons about it, replies via CLI (`bh reply`). Natural and responsive.
+**Multi-turn (worker asks a question)**: Channel pushes the question to the lead. The lead sees it in context, reasons about it, replies via CLI (`b0 reply`). Natural and responsive.
 
 **Pros**: True async. Lead is notified immediately. Better UX for concurrent tasks.
 **Cons**: Depends on MCP channel support (experimental). Lead must support MCP — not all agents do. More complex setup.
 
-### How Claude Code knows about Boxhouse
+### How Claude Code knows about Box0
 
-`bh login` stores connection info. Skill installation is a separate step:
+`b0 login` stores connection info. Skill installation is a separate step:
 
 ```bash
-bh login http://server:8080 --key <api-key>
-# → stores connection info in ~/.bh/config
+b0 login http://server:8080 --key <api-key>
+# → stores connection info in ~/.b0/config
 
-bh skill install claude-code   # → ~/.claude/skills/bh/SKILL.md
-bh skill install codex         # → ~/.codex/AGENTS.md
+b0 skill install claude-code   # → ~/.claude/skills/b0/SKILL.md
+b0 skill install codex         # → ~/.codex/AGENTS.md
 
-bh logout
+b0 logout
 # → clears connection info
 # → uninstalls all skills
 ```
 
-The skill teaches the agent when and how to use `bh` CLI commands. It triggers proactively when the user's request matches delegation patterns (e.g., "review this PR", "check for security issues"). `bh skill show` prints the content for manual integration with other agents.
+The skill teaches the agent when and how to use `b0` CLI commands. It triggers proactively when the user's request matches delegation patterns (e.g., "review this PR", "check for security issues"). `b0 skill show` prints the content for manual integration with other agents.
 
-If a machine already has `bh node join` configured (for running workers), `bh login` is not needed again — the connection info is already stored.
+If a machine already has `b0 node join` configured (for running workers), `b0 login` is not needed again — the connection info is already stored.
 
 ## Worker lifecycle
 
@@ -241,29 +241,29 @@ This is an implementation detail — the user doesn't choose or configure it. Fr
 ### Single machine (simplest case)
 
 ```bash
-bh server              # start server, auto-registers as a node
-bh login http://localhost:8080
-bh worker add reviewer --instructions "Focus on correctness and edge cases."
+b0 server              # start server, auto-registers as a node
+b0 login http://localhost:8080
+b0 worker add reviewer --instructions "Focus on correctness and edge cases."
 
-claude                      # open Claude Code, bh skill is loaded
+claude                      # open Claude Code, b0 skill is loaded
 ```
 
 ### Multi-machine
 
 ```bash
 # Machine A: start server
-bh server
+b0 server
 
 # Machine B: join as a node
-bh node join http://server:8080
+b0 node join http://server:8080
 
 # Machine C: join as a node
-bh node join http://server:8080
+b0 node join http://server:8080
 
 # From anywhere: manage workers
-bh login http://server:8080
-bh worker add reviewer --instructions "..."              # server picks a node
-bh worker add ml-agent --instructions "..." --node gpu-box  # pin to specific node
+b0 login http://server:8080
+b0 worker add reviewer --instructions "..."              # server picks a node
+b0 worker add ml-agent --instructions "..." --node gpu-box  # pin to specific node
 ```
 
 ### Daily use
@@ -274,9 +274,9 @@ User opens Claude Code and talks normally:
 You: review this PR and check for security issues.
 
 Claude Code:
-  bh delegate reviewer "review this PR"
-  bh delegate security "check for vulnerabilities"
-  bh wait
+  b0 delegate reviewer "review this PR"
+  b0 delegate security "check for vulnerabilities"
+  b0 wait
 
   reviewer done (47s): 2 issues found — unhandled timeout on line 42,
                        generic function name on line 87.
@@ -290,77 +290,77 @@ Claude Code:
 ### Connection
 
 ```bash
-bh login http://server:8080 --key <key>  # stores connection info
-bh logout                        # clear credentials + uninstall skill
-bh status                        # which server, connection health
+b0 login http://server:8080 --key <key>  # stores connection info
+b0 logout                        # clear credentials + uninstall skill
+b0 status                        # which server, connection health
 ```
 
 ### Server (ops, on the server machine)
 
 ```bash
-bh server                        # start server
-bh server --config bh.yaml  # start with config file
+b0 server                        # start server
+b0 server --config b0.yaml  # start with config file
 ```
 
 ### Node management
 
 ```bash
-bh node join http://server:8080  # run on a worker machine, starts daemon
-bh node ls                       # list all nodes + status
-bh node info <name>              # which workers are on this node
-bh node remove <name>            # decommission a node (migrate workers first)
+b0 node join http://server:8080  # run on a worker machine, starts daemon
+b0 node ls                       # list all nodes + status
+b0 node info <name>              # which workers are on this node
+b0 node remove <name>            # decommission a node (migrate workers first)
 ```
 
 ### Worker management (from anywhere, via API to server)
 
 ```bash
 # Full-time workers
-bh worker add <name> \
+b0 worker add <name> \
   --instructions "..."                # server picks a node
-bh worker add <name> \
+b0 worker add <name> \
   --instructions "..." \
   --node <node-name>                  # optional: pin to a specific node
 
 # Temp workers
-bh worker temp "<task>"          # one-off, server picks a node
-bh worker temp "<task>" --node <node-name>  # one-off, specific node
+b0 worker temp "<task>"          # one-off, server picks a node
+b0 worker temp "<task>" --node <node-name>  # one-off, specific node
 
 # Remove (own workers only)
-bh worker remove <name>
+b0 worker remove <name>
 
 # List
-bh worker ls                     # my workers
-bh worker ls --all               # all workers in the team
-bh worker info <name>            # details: instructions, node, repo, status, created by
+b0 worker ls                     # my workers
+b0 worker ls --all               # all workers in the team
+b0 worker info <name>            # details: instructions, node, repo, status, created by
 
 # Update
-bh worker update <name> \
+b0 worker update <name> \
   --instructions "New instructions"
 
 # Start / stop (own workers only)
-bh worker stop <name>
-bh worker start <name>
+b0 worker stop <name>
+b0 worker start <name>
 
 # Logs
-bh worker logs <name>
-bh worker logs <name> --follow
+b0 worker logs <name>
+b0 worker logs <name> --follow
 ```
 
 ### Delegation (used by lead agents via bash)
 
 ```bash
-bh delegate <worker> "<task>"    # send task, returns immediately with thread-id
-bh wait                          # block until all pending results arrive
+b0 delegate <worker> "<task>"    # send task, returns immediately with thread-id
+b0 wait                          # block until all pending results arrive
 ```
 
 ### Groups & Keys
 
 ```bash
-bh group create <name>                        # create a group (admin only)
-bh group ls                                   # list groups (admin only)
-bh group invite <group> --description "..."   # generate group key (admin only)
-bh group keys                                 # list API keys
-bh group revoke <key-prefix>                  # revoke a key (admin only)
+b0 group create <name>                        # create a group (admin only)
+b0 group ls                                   # list groups (admin only)
+b0 group invite <group> --description "..."   # generate group key (admin only)
+b0 group keys                                 # list API keys
+b0 group revoke <key-prefix>                  # revoke a key (admin only)
 ```
 
 ## Permissions model
@@ -409,13 +409,13 @@ Server currently does not validate the `from` field on messages. Worker A can se
 |-----|-------------|
 | Node concept | A machine runs a daemon, accepts scheduling from server |
 | Worker daemon | Our own process: polls inbox + invokes LLM |
-| `bh server` | Start the control plane (exists, minor changes) |
-| `bh node join` | Register a machine as a worker node |
-| `bh worker add/remove/ls/temp` | Remote worker lifecycle management |
-| `bh delegate` + `bh wait` | Non-blocking task delegation + result collection |
-| `bh login` | Connection setup (URL + key) |
-| `bh group` | Group and key management |
-| Agent skill | `bh skill install <agent>`, teaches agent how to delegate |
+| `b0 server` | Start the control plane (exists, minor changes) |
+| `b0 node join` | Register a machine as a worker node |
+| `b0 worker add/remove/ls/temp` | Remote worker lifecycle management |
+| `b0 delegate` + `b0 wait` | Non-blocking task delegation + result collection |
+| `b0 login` | Connection setup (URL + key) |
+| `b0 group` | Group and key management |
+| Agent skill | `b0 skill install <agent>`, teaches agent how to delegate |
 | Worker instructions | Per-worker specialization definition |
 | Role templates | Preset common worker roles |
 

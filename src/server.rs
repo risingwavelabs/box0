@@ -690,7 +690,7 @@ pub async fn run(config: ServerConfig) {
         .with_state(state);
 
     let addr = config.address();
-    tracing::info!(address = %addr, "Boxhouse server starting");
+    tracing::info!(address = %addr, "Box0 server starting");
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
@@ -701,7 +701,7 @@ pub async fn run(config: ServerConfig) {
         .await
         .expect("server error");
 
-    tracing::info!("Boxhouse server stopped");
+    tracing::info!("Box0 server stopped");
 }
 
 async fn shutdown_signal() {

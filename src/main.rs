@@ -7,7 +7,7 @@ mod server;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "bh", about = "Boxhouse — agent platform", version)]
+#[command(name = "b0", about = "Box0 — agent platform", version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -15,7 +15,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Start the Boxhouse server
+    /// Start the Box0 server
     Server {
         #[arg(long)]
         config: Option<String>,
@@ -26,7 +26,7 @@ enum Command {
         #[arg(long)]
         db: Option<String>,
     },
-    /// Connect to a Boxhouse server
+    /// Connect to a Box0 server
     Login {
         /// Server URL (e.g., http://localhost:8080)
         server_url: String,
@@ -34,7 +34,7 @@ enum Command {
         #[arg(long)]
         key: Option<String>,
     },
-    /// Disconnect from Boxhouse server
+    /// Disconnect from Box0 server
     Logout,
     /// Manage workers
     Worker {
@@ -283,7 +283,7 @@ async fn cmd_login(server_url: &str, api_key: Option<&str>) {
     };
 
     match client.health().await {
-        Ok(version) => println!("Connected to Boxhouse server v{}", version),
+        Ok(version) => println!("Connected to Box0 server v{}", version),
         Err(e) => {
             eprintln!("Error: could not connect to {}. {}", url, e);
             std::process::exit(1);
@@ -300,12 +300,12 @@ async fn cmd_login(server_url: &str, api_key: Option<&str>) {
     }
 
     println!("Login complete. Server: {}", url);
-    println!("To install agent skill: bh skill install claude-code  (or: codex)");
+    println!("To install agent skill: b0 skill install claude-code  (or: codex)");
 }
 
 fn cmd_reset() {
     // Remove DB in current directory
-    for name in ["bh.db", "bh.db-wal", "bh.db-shm"] {
+    for name in ["b0.db", "b0.db-wal", "b0.db-shm"] {
         if std::path::Path::new(name).exists() {
             let _ = std::fs::remove_file(name);
         }
@@ -341,7 +341,7 @@ fn cmd_skill_install(agent: &str) {
 
     match agent {
         "claude-code" => match config::CliConfig::install_skill_claude_code(&url) {
-            Ok(()) => println!("Skill installed for Claude Code (~/.claude/skills/bh/SKILL.md)"),
+            Ok(()) => println!("Skill installed for Claude Code (~/.claude/skills/b0/SKILL.md)"),
             Err(e) => {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
@@ -851,7 +851,7 @@ async fn cmd_wait() {
                     }
                     "question" => {
                         println!(
-                            "\n{} asks (thread {}): {}\n  → Use: bh reply {} \"<your answer>\"",
+                            "\n{} asks (thread {}): {}\n  → Use: b0 reply {} \"<your answer>\"",
                             worker_name, msg.thread_id, content, msg.thread_id
                         );
                     }

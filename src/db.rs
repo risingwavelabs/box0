@@ -771,7 +771,7 @@ impl Database {
     /// Create an admin key (server-level, no group).
     pub fn create_admin_key(&self, description: &str) -> Result<String> {
         let conn = self.conn.lock().unwrap();
-        let key = format!("bh_{}", &Uuid::new_v4().to_string().replace('-', ""));
+        let key = format!("b0_{}", &Uuid::new_v4().to_string().replace('-', ""));
         conn.execute(
             "INSERT INTO api_keys (key, role, group_name, description) VALUES (?1, 'admin', NULL, ?2)",
             params![key, description],
@@ -794,7 +794,7 @@ impl Database {
             anyhow::bail!("group '{}' not found", group_name);
         }
 
-        let key = format!("bh_{}", &Uuid::new_v4().to_string().replace('-', ""));
+        let key = format!("b0_{}", &Uuid::new_v4().to_string().replace('-', ""));
         conn.execute(
             "INSERT INTO api_keys (key, role, group_name, description) VALUES (?1, 'member', ?2, ?3)",
             params![key, group_name, description],
@@ -1092,7 +1092,7 @@ mod tests {
         let key = db.bootstrap_admin_key().unwrap();
         assert!(key.is_some());
         let admin_key = key.unwrap();
-        assert!(admin_key.starts_with("bh_"));
+        assert!(admin_key.starts_with("b0_"));
 
         // Second call returns None (already exists)
         let key2 = db.bootstrap_admin_key().unwrap();
@@ -1115,7 +1115,7 @@ mod tests {
 
         // Create group key
         let key = db.create_group_key("frontend", "alice").unwrap();
-        assert!(key.starts_with("bh_"));
+        assert!(key.starts_with("b0_"));
 
         // Validate returns member role + group
         let result = db.validate_api_key(&key).unwrap();
@@ -1135,7 +1135,7 @@ mod tests {
         assert_eq!(keys.len(), 0);
 
         // Invalid key
-        let invalid = db.validate_api_key("bh_invalid").unwrap();
+        let invalid = db.validate_api_key("b0_invalid").unwrap();
         assert_eq!(invalid, None);
     }
 }

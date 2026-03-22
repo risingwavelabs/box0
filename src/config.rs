@@ -23,7 +23,7 @@ fn default_port() -> u16 {
     8080
 }
 fn default_db_path() -> String {
-    "./bh.db".to_string()
+    "./b0.db".to_string()
 }
 fn default_log_level() -> String {
     "info".to_string()
@@ -53,22 +53,22 @@ impl ServerConfig {
             None => ServerConfig::default(),
         };
 
-        if let Ok(v) = std::env::var("BH_HOST") {
+        if let Ok(v) = std::env::var("B0_HOST") {
             if !v.is_empty() {
                 cfg.host = v;
             }
         }
-        if let Ok(v) = std::env::var("BH_PORT") {
+        if let Ok(v) = std::env::var("B0_PORT") {
             if let Ok(port) = v.parse::<u16>() {
                 cfg.port = port;
             }
         }
-        if let Ok(v) = std::env::var("BH_DB_PATH") {
+        if let Ok(v) = std::env::var("B0_DB_PATH") {
             if !v.is_empty() {
                 cfg.db_path = v;
             }
         }
-        if let Ok(v) = std::env::var("BH_LOG_LEVEL") {
+        if let Ok(v) = std::env::var("B0_LOG_LEVEL") {
             if !v.is_empty() {
                 cfg.log_level = v;
             }
@@ -112,7 +112,7 @@ impl CliConfig {
     fn config_dir() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join(".bh")
+            .join(".b0")
     }
 
     fn config_path() -> PathBuf {
@@ -152,7 +152,7 @@ impl CliConfig {
 
     /// Get the server URL, with env var override.
     pub fn server_url(&self) -> String {
-        if let Ok(v) = std::env::var("BH_SERVER_URL") {
+        if let Ok(v) = std::env::var("B0_SERVER_URL") {
             if !v.is_empty() {
                 return v;
             }
@@ -178,15 +178,15 @@ impl CliConfig {
 
     // --- Skill Installation ---
 
-    const SKILL_MARKER_START: &str = "<!-- boxhouse-skill-start -->";
-    const SKILL_MARKER_END: &str = "<!-- boxhouse-skill-end -->";
+    const SKILL_MARKER_START: &str = "<!-- box0-skill-start -->";
+    const SKILL_MARKER_END: &str = "<!-- box0-skill-end -->";
 
     /// Generate the core skill content (agent-agnostic).
     pub fn skill_content(server_url: &str) -> String {
         format!(
-r#"# Boxhouse (`bh`) — Agent Delegation
+r#"# Box0 (`b0`) — Agent Delegation
 
-You have access to a team of specialized AI workers managed by Boxhouse.
+You have access to a team of specialized AI workers managed by Box0.
 The server is at: {server_url}
 
 ## When to delegate
@@ -194,27 +194,27 @@ The server is at: {server_url}
 When the user's request matches a worker's expertise, delegate instead of doing it yourself.
 Examples: "review this PR", "check for security issues", "write tests", "update the docs".
 
-Run `bh worker ls` to see available workers and their specializations.
+Run `b0 worker ls` to see available workers and their specializations.
 
 ## Commands
 
 ```bash
 # Delegate a task (non-blocking, returns immediately)
-bh delegate <worker> "<detailed task prompt>"
+b0 delegate <worker> "<detailed task prompt>"
 
 # Wait for results
-bh wait
+b0 wait
 
 # Quick one-off task (no named worker needed)
-bh worker temp "<task>"
+b0 worker temp "<task>"
 
 # Reply to a worker's question
-bh reply <thread-id> "<answer>"
+b0 reply <thread-id> "<answer>"
 
 # Manage workers
-bh worker ls
-bh worker add <name> --instructions "..."
-bh worker remove <name>
+b0 worker ls
+b0 worker add <name> --instructions "..."
+b0 worker remove <name>
 ```
 
 ## How to write delegation prompts
@@ -233,16 +233,16 @@ Good: "Review the changes on branch feature-timeout in this repo. The PR adds ti
 You can delegate to multiple workers in parallel:
 
 ```bash
-bh delegate reviewer "Review the changes on branch feature-timeout..."
-bh delegate security "Check src/handler.rs for security vulnerabilities..."
-bh wait
+b0 delegate reviewer "Review the changes on branch feature-timeout..."
+b0 delegate security "Check src/handler.rs for security vulnerabilities..."
+b0 wait
 ```
 
-`bh wait` blocks and streams results as workers complete.
+`b0 wait` blocks and streams results as workers complete.
 
 ## Worker questions
 
-If a worker asks a question during `bh wait`, you'll see it. Use `bh reply <thread-id> "<answer>"` to respond. The worker will continue after receiving your answer.
+If a worker asks a question during `b0 wait`, you'll see it. Use `b0 reply <thread-id> "<answer>"` to respond. The worker will continue after receiving your answer.
 "#,
             server_url = server_url
         )
@@ -254,14 +254,14 @@ If a worker asks a question during `bh wait`, you'll see it. Use `bh reply <thre
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".claude")
             .join("skills")
-            .join("bh");
+            .join("b0");
         fs::create_dir_all(&dir)?;
 
         let content = format!(
 r#"---
-name: bh
+name: b0
 description: |
-  Delegate tasks to specialized AI workers via Boxhouse.
+  Delegate tasks to specialized AI workers via Box0.
   Use when the user asks to review code, check security, run tests,
   or any task that matches a registered worker's expertise.
 allowed-tools:
@@ -281,7 +281,7 @@ allowed-tools:
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".claude")
             .join("skills")
-            .join("bh");
+            .join("b0");
         if dir.exists() {
             fs::remove_dir_all(&dir)?;
         }
@@ -305,7 +305,7 @@ allowed-tools:
             fs::create_dir_all(parent)?;
         }
 
-        // Read existing content and remove old boxhouse section if present
+        // Read existing content and remove old box0 section if present
         let existing = fs::read_to_string(&agents_path).unwrap_or_default();
         let cleaned = Self::remove_marked_section(&existing);
 
