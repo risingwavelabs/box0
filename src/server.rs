@@ -398,6 +398,20 @@ async fn start_worker_handler(
     }
 }
 
+async fn worker_threads_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path((group_name, name)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+        return e;
+    }
+    match state.db.get_worker_threads(&group_name, &name, 50) {
+        Ok(threads) => (StatusCode::OK, Json(serde_json::json!({"threads": threads}))).into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
 async fn worker_logs_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
@@ -613,6 +627,7 @@ pub async fn run(config: ServerConfig) {
             get(get_worker_handler).delete(remove_worker_handler).put(update_worker_handler))
         .route("/groups/{group_name}/workers/{name}/stop", post(stop_worker_handler))
         .route("/groups/{group_name}/workers/{name}/start", post(start_worker_handler))
+        .route("/groups/{group_name}/workers/{name}/threads", get(worker_threads_handler))
         .route("/groups/{group_name}/workers/{name}/logs", get(worker_logs_handler))
         // Nodes (global)
         .route("/nodes", get(list_nodes_handler).post(register_node_handler))

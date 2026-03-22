@@ -69,6 +69,15 @@ pub struct Node {
     pub last_heartbeat: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadSummary {
+    pub thread_id: String,
+    pub first_content: Option<serde_json::Value>,
+    pub latest_type: String,
+    pub latest_at: DateTime<Utc>,
+    pub message_count: i64,
+}
+
 impl Database {
     pub fn new(path: &str) -> Result<Self> {
         let conn =
@@ -794,6 +803,46 @@ impl Database {
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(workers)
+    }
+
+    pub fn get_worker_threads(
+        &self,
+        group_name: &str,
+        worker_name: &str,
+        limit: i64,
+    ) -> Result<Vec<ThreadSummary>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT
+                m.thread_id,
+                (SELECT content FROM inbox_messages
+                 WHERE group_name = ?1 AND thread_id = m.thread_id
+                 ORDER BY created_at ASC LIMIT 1) AS first_content,
+                (SELECT type FROM inbox_messages
+                 WHERE group_name = ?1 AND thread_id = m.thread_id
+                 ORDER BY created_at DESC LIMIT 1) AS latest_type,
+                MAX(m.created_at) AS latest_at,
+                COUNT(*) AS message_count
+             FROM inbox_messages m
+             WHERE m.group_name = ?1 AND (m.to_agent = ?2 OR m.from_agent = ?2)
+             GROUP BY m.thread_id
+             ORDER BY latest_at DESC
+             LIMIT ?3",
+        )?;
+        let threads = stmt
+            .query_map(params![group_name, worker_name, limit], |row| {
+                let content_str: Option<String> = row.get(1)?;
+                let ts: String = row.get(3)?;
+                Ok(ThreadSummary {
+                    thread_id: row.get(0)?,
+                    first_content: content_str.and_then(|s| serde_json::from_str(&s).ok()),
+                    latest_type: row.get(2)?,
+                    latest_at: Database::parse_ts(&ts),
+                    message_count: row.get(4)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(threads)
     }
 
     pub fn get_worker_logs(
