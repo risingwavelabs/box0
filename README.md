@@ -147,7 +147,15 @@ Your agent               Box0 Server              Worker nodes
      |  <----------------------  delivers results        |
 ```
 
-Each worker runs in its own isolated directory under `workers/<name>/`. When a task arrives, the node daemon spawns `claude --print --output-format json --system-prompt "<instructions>"` as a subprocess in that directory. The task is piped via stdin. When done, the result goes back through the inbox.
+Each worker runs in its own isolated directory under `workers/<name>/`. When a task arrives, the node daemon spawns the configured runtime as a subprocess in that directory. The task is piped via stdin. When done, the result goes back through the inbox.
+
+Workers support multiple runtimes. By default (`auto`), Box0 uses Claude Code if installed, otherwise falls back to Codex. You can also set the runtime explicitly per worker:
+
+```bash
+b0 worker add reviewer --instructions "..." --runtime claude   # use Claude Code
+b0 worker add coder --instructions "..." --runtime codex       # use Codex
+b0 worker add helper --instructions "..."                      # auto-detect
+```
 
 For multi-turn conversations, the daemon stores the Claude session ID and uses `--resume` on follow-up messages, preserving the full conversation history.
 
@@ -189,7 +197,7 @@ b0 reset                                   Clean slate
 b0 status                                  Show connection info
 b0 invite <name>                           Create user (admin only)
 
-b0 worker add <name> --instructions "..." [--description "..."] [--group <g>] [--node <n>]
+b0 worker add <name> --instructions "..." [--description "..."] [--group <g>] [--node <n>] [--runtime auto|claude|codex]
 b0 worker ls [--group <g>]
 b0 worker info / update / stop / start / logs / remove [--group <g>] <name>
 b0 worker temp "<task>" [--group <g>]      One-off task (non-blocking)
