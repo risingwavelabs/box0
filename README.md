@@ -1,174 +1,197 @@
 # Box0
 
-An agent platform for deploying and managing specialized AI workers.
+You have one AI agent. But some tasks need three. Box0 lets you spin up a team of specialized AI workers and delegate tasks to them — from your terminal.
 
-Users say one thing, a group of specialized agents do their jobs, and results come back.
+## The Problem
 
-## Quick Start
+You're using Claude Code (or Codex). You ask it to compare two tools. It gives you one perspective. You want three independent viewpoints, running in parallel, coming back with different angles. Your single agent can't do that.
 
-### Build
+## The Solution
+
+Box0 turns your single agent into a **lead** that manages a team of **workers**. Each worker is its own Claude instance with its own instructions. They run in parallel, on the same machine or across multiple machines.
+
+## Example: Three Agents Debate "Claude Code vs Codex"
 
 ```bash
-cargo build --release
-# Binary at: target/release/b0
+# Start the server (one-time setup)
+b0 server
+
+# In another terminal: login and create workers
+b0 login http://localhost:8080 --key <admin-key>
+b0 group create my-team
+b0 group invite my-team --description "me"
+b0 login http://localhost:8080 --key <group-key>
+
+b0 worker add ux-expert \
+  --instructions "You are a UX researcher. Evaluate developer tools from the perspective of daily workflow, ergonomics, and productivity."
+
+b0 worker add architect \
+  --instructions "You are a software architect. Evaluate developer tools from the perspective of technical capabilities, extensibility, and system design."
+
+b0 worker add pragmatist \
+  --instructions "You are a pragmatic tech lead. Cut through hype. Evaluate based on what actually ships faster with fewer bugs."
+
+# Fire off three parallel tasks
+b0 delegate ux-expert "Compare Claude Code and OpenAI Codex CLI. Which one provides a better developer experience and why?"
+b0 delegate architect "Compare Claude Code and OpenAI Codex CLI from a technical architecture perspective. Strengths, weaknesses, trade-offs."
+b0 delegate pragmatist "Claude Code vs Codex CLI — which one actually makes engineers more productive? Be honest and specific."
+
+# Wait for all three to come back
+b0 wait
+# ux-expert done (45s): Claude Code's 1M context window means...
+# architect done (52s): Codex's sandbox-first approach provides...
+# pragmatist done (38s): In practice, Claude Code ships faster for...
 ```
 
-### Single Machine Setup
+Three independent AI agents, three perspectives, running in parallel. You get a real debate instead of one agent's opinion.
+
+## End-to-End Setup
+
+### 1. Build
 
 ```bash
-# 1. Start server (prints admin key on first start)
+git clone https://github.com/risingwavelabs/box0.git
+cd box0
+cargo build --release
+export PATH="$PWD/target/release:$PATH"
+```
+
+### 2. Start Server
+
+```bash
 b0 server
+# First start prints:
 #   Admin key: b0_abc123...
+#   Save this key. Use it to login:
+#   b0 login http://127.0.0.1:8080 --key b0_abc123...
+```
 
-# 2. Connect with admin key (from another terminal)
+### 3. Login and Create a Group
+
+```bash
 b0 login http://localhost:8080 --key b0_abc123...
-
-# 3. Create a group and invite yourself
 b0 group create my-team
 b0 group invite my-team --description "me"
 #   Key: b0_def456...
-
-# 4. Login with group key
 b0 login http://localhost:8080 --key b0_def456...
+```
 
-# 5. Add a worker and delegate
-b0 worker add reviewer --instructions "Senior code reviewer. Focus on correctness."
-b0 delegate reviewer "Review the file src/main.rs for correctness."
+### 4. Add Workers
+
+```bash
+b0 worker add reviewer --instructions "Senior code reviewer. Focus on correctness and edge cases."
+b0 worker add security --instructions "Security engineer. Find vulnerabilities."
+```
+
+### 5. Delegate and Wait
+
+```bash
+b0 delegate reviewer "Review src/main.rs for correctness issues."
+b0 delegate security "Check src/main.rs for security vulnerabilities."
 b0 wait
 ```
 
-### Multi-Machine Setup
+That's it. Two workers analyze your code in parallel and report back.
+
+## Using with Claude Code
+
+Install the Box0 skill so Claude Code automatically delegates when appropriate:
+
+```bash
+b0 skill install claude-code
+```
+
+Now Claude Code knows about your workers. When you say "review this PR and check for security issues", Claude Code will automatically run `b0 delegate` to your workers instead of doing everything itself.
+
+## Using with Codex
+
+```bash
+b0 skill install codex
+```
+
+This appends Box0 instructions to `~/.codex/AGENTS.md`. Codex will learn to delegate tasks to your workers.
+
+## Using with Other Agents
+
+```bash
+b0 skill show
+```
+
+Prints the skill content to stdout. Paste it into whatever your agent uses for custom instructions.
+
+## One-Off Tasks
+
+Don't want to create a named worker? Use `worker temp`:
+
+```bash
+b0 worker temp "Summarize the top 5 differences between Rust and Go."
+b0 wait
+```
+
+Creates a temporary worker, runs the task, and auto-cleans up.
+
+## Multi-Machine
+
+Run workers on different machines:
 
 ```bash
 # Machine A: start server
-b0 server --host 0.0.0.0 --port 8080
-
-# Machine A: create group and keys
-b0 login http://localhost:8080 --key <admin-key>
-b0 group create dev-team
-b0 group invite dev-team --description "node-b"
+b0 server --host 0.0.0.0
 
 # Machine B: join as a worker node
-b0 node join http://machine-a:8080 --name gpu-box --key <group-key>
+b0 node join http://machine-a:8080 --name gpu-box --key <key>
 
 # Machine A: add worker on the remote node
-b0 login http://localhost:8080 --key <group-key>
 b0 worker add ml-agent --instructions "ML specialist." --node gpu-box
 b0 delegate ml-agent "Analyze this dataset."
 b0 wait
 ```
 
+The task is routed to Machine B. Claude Code CLI runs there, using Machine B's authentication and compute.
+
 ## CLI Reference
 
-### Connection
-
 ```
-b0 login <server-url> --key <api-key>   Connect to server
+b0 server [--host] [--port] [--db]       Start server
+b0 login <url> --key <key>               Connect
 b0 logout                                Disconnect
-b0 skill install claude-code             Install skill for Claude Code
-b0 skill install codex                   Install skill for Codex
-b0 skill uninstall <agent>               Remove skill
-b0 skill show                            Print skill content to stdout
-b0 status                                Show connection, workers, pending tasks
-```
+b0 reset                                 Clean slate (delete DB, config, skills)
+b0 status                                Show connection info
 
-### Server
-
-```
-b0 server [--host 127.0.0.1] [--port 8080] [--db ./b0.db]
-```
-
-On first start, generates and prints an admin key.
-
-### Workers
-
-```
-b0 worker add <name> --instructions "..." [--node <node>]
+b0 worker add <name> --instructions "..."  [--node <node>]
 b0 worker ls
 b0 worker info <name>
 b0 worker update <name> --instructions "..."
-b0 worker stop <name>
-b0 worker start <name>
+b0 worker stop/start <name>
 b0 worker logs <name>
 b0 worker remove <name>
-b0 worker temp "<task>" [--instructions "..."]
+b0 worker temp "<task>"                  One-off (non-blocking)
+
+b0 delegate <worker> "<task>"            Send task (non-blocking)
+b0 delegate <worker>                     Read task from stdin
+b0 wait                                  Collect results
+b0 reply <thread-id> "<answer>"          Answer a worker's question
+
+b0 node join <url> [--name] [--key]      Join as worker node
+b0 node ls                               List nodes
+
+b0 group create <name>                   Create group (admin)
+b0 group invite <group> [--description]  Generate key (admin)
+b0 group keys                            List keys
+b0 group revoke <prefix>                 Revoke key (admin)
+
+b0 skill install claude-code             Install for Claude Code
+b0 skill install codex                   Install for Codex
+b0 skill uninstall <agent>               Remove
+b0 skill show                            Print to stdout
 ```
 
-### Delegation
+## How It Works
 
-```
-b0 delegate <worker> "<task>"       Send task (non-blocking), prints thread-id
-b0 delegate <worker>                Read task from stdin
-b0 worker temp "<task>"             One-off task (non-blocking), auto-cleanup
-b0 wait                             Block until all pending tasks complete
-b0 reply <thread-id> "<message>"    Reply to a worker's question
-```
+Workers are not long-running processes. When a task arrives, the node daemon spawns `claude --print --output-format json --system-prompt "<instructions>"` as a subprocess. The task is piped via stdin. When done, the result goes back through the server's inbox to whoever delegated it.
 
-### Nodes
-
-```
-b0 node join <server-url> [--name <name>] [--key <api-key>]
-b0 node ls
-```
-
-### Groups & Keys
-
-```
-b0 group create <name>                          Create a group (admin only)
-b0 group ls                                     List groups (admin only)
-b0 group invite <group> [--description "..."]   Generate group key (admin only)
-b0 group keys                                   List API keys
-b0 group revoke <key-prefix>                    Revoke a key (admin only)
-```
-
-## Authentication
-
-Server generates an admin key on first start. All endpoints require authentication.
-
-- **Admin key** — server-level. Can create groups, invite members, manage nodes.
-- **Group key** — scoped to one group. Can manage workers, delegate tasks, see only own group's resources.
-
-Groups are fully isolated: workers, agents, and messages in one group are invisible to other groups.
-
-## Architecture
-
-```
-Server
-├── Admin key (server-level)
-├── Group: frontend
-│   ├── key: b0_abc... (alice)
-│   ├── reviewer worker (local node)
-│   └── doc-writer worker (local node)
-├── Group: ml-team
-│   ├── key: b0_def... (bob)
-│   └── ml-agent worker (gpu-box node)
-│
-├── Node: local (auto-registered)
-├── Node: gpu-box (via b0 node join)
-└── Node: cpu-1 (via b0 node join)
-```
-
-Workers are ephemeral per-task. When a request arrives, the node daemon spawns a Claude Code CLI subprocess, runs the task, and sends the result back.
-
-## How Workers Execute Tasks
-
-Workers invoke `claude --print --output-format json --system-prompt "<instructions>"` with the task piped via stdin. They use the machine's existing authentication (OAuth or API key).
-
-Multi-turn is supported: if a lead sends a `b0 reply`, the daemon resumes the Claude session with `--resume <session_id>`.
-
-## Configuration
-
-Server config via TOML file (`--config path`) or environment variables:
-- `B0_HOST` — server bind address
-- `B0_PORT` — server port
-- `B0_DB_PATH` — SQLite database file path
-- `B0_LOG_LEVEL` — log level (info, debug, etc.)
-
-CLI config stored at `~/.b0/config.toml`:
-- `server_url` — server address (overridable via `B0_SERVER_URL`)
-- `lead_id` — auto-generated stable identity
-- `api_key` — stored by `b0 login --key`
+Workers use the machine's existing authentication (OAuth or API key). No special credential setup needed.
 
 ## License
 
-Private. Copyright RisingWave Labs.
+MIT License. Copyright (c) RisingWave Labs.
