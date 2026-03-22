@@ -1,6 +1,6 @@
 # Box0
 
-Box0 is a multi-agent platform. It lets you run multiple AI agents with different specializations across one or more machines, assign tasks to them in parallel, and collect results.
+Box0 is a self-hosted multi-agent platform. It lets you define AI agents with different specializations, run them in parallel, and collect results. Single binary, works with Claude Code and Codex.
 
 ## Problem
 
