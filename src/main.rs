@@ -570,6 +570,13 @@ async fn main() {
         },
 
         Command::Delegate { workspace, thread, agent, task } => { let workspace = resolve_workspace(workspace);
+            // When --thread is used with one positional arg, it's the task, not the agent.
+            // Clap parses the first positional as `agent`, so swap them.
+            let (agent, task) = if thread.is_some() && agent.is_some() && task.is_none() {
+                (None, agent) // agent was actually the task
+            } else {
+                (agent, task)
+            };
             let task_content = match task {
                 Some(t) => {
                     if !std::io::stdin().is_terminal() {
