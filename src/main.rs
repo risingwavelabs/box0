@@ -845,7 +845,6 @@ async fn cmd_wait() {
                             status_lines_printed = 0;
                             println!("{} done ({}): {}", agent_name, elapsed, content);
                             pending.threads.remove(&msg.thread_id);
-                            if is_temp { let _ = client.remove_agent(&thread_workspace, &agent_name).await; }
                             if !pending.threads.is_empty() {
                                 println!();
                                 print_status(&status, &pending, is_tty, &mut status_lines_printed);
@@ -857,7 +856,6 @@ async fn cmd_wait() {
                             status_lines_printed = 0;
                             eprintln!("{} failed ({}): {}", agent_name, elapsed, content);
                             pending.threads.remove(&msg.thread_id);
-                            if is_temp { let _ = client.remove_agent(&thread_workspace, &agent_name).await; }
                             if !pending.threads.is_empty() {
                                 println!();
                                 print_status(&status, &pending, is_tty, &mut status_lines_printed);
