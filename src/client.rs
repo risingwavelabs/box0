@@ -286,6 +286,23 @@ impl BhClient {
         Ok(resp.json().await?)
     }
 
+    pub async fn get_agent_for_thread(&self, workspace: &str, thread_id: &str) -> Result<Option<String>> {
+        let req = self.client.get(format!("{}/workspaces/{}/threads/{}", self.base_url, workspace, thread_id));
+        let resp = self.request(req).await?;
+        let body: serde_json::Value = resp.json().await?;
+        let messages = body["messages"].as_array();
+        if let Some(msgs) = messages {
+            for m in msgs {
+                if m["type"].as_str() == Some("request") {
+                    if let Some(to) = m["to"].as_str() {
+                        return Ok(Some(to.to_string()));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
     pub async fn list_tasks(&self, workspace: &str) -> Result<Vec<crate::db::Task>> {
         let req = self.client.get(format!("{}/workspaces/{}/tasks", self.base_url, workspace));
         let resp = self.request(req).await?;

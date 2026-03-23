@@ -637,7 +637,7 @@ impl Database {
     pub fn list_agents(&self, workspace_name: &str) -> Result<Vec<Agent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            &format!("SELECT {} FROM agents WHERE workspace_name = ?1 ORDER BY created_at ASC", Self::AGENT_COLS),
+            &format!("SELECT {} FROM agents WHERE workspace_name = ?1 AND temp = 0 ORDER BY created_at ASC", Self::AGENT_COLS),
         )?;
         let agents = stmt
             .query_map(params![workspace_name], Self::parse_agent_row)?
@@ -970,6 +970,18 @@ impl Database {
                     created_at: Database::parse_ts(&ts),
                 })
             },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// Look up the agent name for a thread by finding the first request message's recipient.
+    pub fn get_agent_for_thread(&self, workspace_name: &str, thread_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT to_id FROM inbox_messages WHERE workspace_name = ?1 AND thread_id = ?2 AND type = 'request' ORDER BY created_at ASC LIMIT 1",
+            params![workspace_name, thread_id],
+            |row| row.get::<_, String>(0),
         )
         .optional()
         .map_err(Into::into)

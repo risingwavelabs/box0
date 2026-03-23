@@ -63,8 +63,8 @@ enum Command {
         /// Continue an existing conversation
         #[arg(long)]
         thread: Option<String>,
-        /// Agent name
-        agent: String,
+        /// Agent name (optional when using --thread)
+        agent: Option<String>,
         /// Task (omit to read from stdin)
         task: Option<String>,
     },
@@ -598,7 +598,38 @@ async fn main() {
                 }
             };
             let task_content = expand_file_refs(&task_content);
-            cmd_delegate(&workspace, &agent, &task_content, thread.as_deref()).await;
+
+            // Resolve agent name: explicit, from --thread, or from pending
+            let resolved_agent = match agent {
+                Some(a) => a,
+                None => {
+                    match &thread {
+                        Some(tid) => {
+                            // Try pending first
+                            let pending = config::CliConfig::load_pending();
+                            if let Some(info) = pending.threads.get(tid.as_str()) {
+                                info.agent.clone()
+                            } else {
+                                // Try server
+                                let cfg = config::CliConfig::load();
+                                let c = make_client(&cfg);
+                                match c.get_agent_for_thread(&workspace, tid).await {
+                                    Ok(Some(name)) => name,
+                                    _ => {
+                                        eprintln!("Error: could not find agent for thread \"{}\". Specify agent name explicitly.", tid);
+                                        std::process::exit(1);
+                                    }
+                                }
+                            }
+                        }
+                        None => {
+                            eprintln!("Error: agent name is required. Use: b0 delegate <agent> \"<task>\"");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            };
+            cmd_delegate(&workspace, &resolved_agent, &task_content, thread.as_deref()).await;
         }
 
         Command::Wait => cmd_wait().await,
