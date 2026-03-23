@@ -1,0 +1,12 @@
+@import 'tailwindcss' source('../');
+@import './box0-dashboard.css';
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  .using-mouse * {
+    outline: none !important;
+  }
+}
