@@ -275,4 +275,21 @@ impl BhClient {
         self.request(req).await?;
         Ok(())
     }
+
+    // --- Tasks ---
+
+    pub async fn create_task(&self, workspace: &str, title: &str) -> Result<crate::db::Task> {
+        let req = self.client
+            .post(format!("{}/workspaces/{}/tasks", self.base_url, workspace))
+            .json(&serde_json::json!({"title": title}));
+        let resp = self.request(req).await?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn list_tasks(&self, workspace: &str) -> Result<Vec<crate::db::Task>> {
+        let req = self.client.get(format!("{}/workspaces/{}/tasks", self.base_url, workspace));
+        let resp = self.request(req).await?;
+        let body: serde_json::Value = resp.json().await?;
+        Ok(serde_json::from_value(body["tasks"].clone()).unwrap_or_default())
+    }
 }

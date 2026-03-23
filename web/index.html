@@ -532,6 +532,185 @@ tr:hover td { background: rgba(59,130,246,0.02); }
   color: var(--primary);
   padding: 6px 0;
 }
+
+/* Tasks page - two panel layout */
+.tasks-layout { display: flex; height: calc(100vh); }
+
+.tasks-chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+
+.tasks-chat-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 15px;
+  background: var(--bg-card);
+}
+
+.tasks-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  background: var(--bg);
+}
+
+.tasks-chat-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.chat-msg {
+  margin-bottom: 12px;
+  max-width: 85%;
+}
+
+.chat-msg.user { margin-left: auto; }
+.chat-msg.assistant { margin-right: auto; }
+
+.chat-msg-bubble {
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-msg.user .chat-msg-bubble {
+  background: var(--primary);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.chat-msg.assistant .chat-msg-bubble {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+
+.chat-msg-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  padding: 0 4px;
+}
+
+.chat-msg.user .chat-msg-meta { text-align: right; }
+
+.tasks-chat-input {
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-card);
+  display: flex;
+  gap: 8px;
+}
+
+.tasks-chat-input input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-family: var(--font);
+}
+
+.tasks-chat-input input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+}
+
+.tasks-board {
+  width: 360px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  background: var(--bg);
+  padding: 16px;
+}
+
+.tasks-board-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.tasks-board-header h3 { font-size: 15px; font-weight: 600; }
+
+.task-group { margin-bottom: 20px; }
+
+.task-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.task-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.task-card:hover { border-color: var(--primary); }
+.task-card.selected { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
+
+.task-card-title {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-card-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.task-status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.task-status-dot.running { background: var(--primary); }
+.task-status-dot.needs_input { background: var(--warning); }
+.task-status-dot.done { background: var(--success); }
+.task-status-dot.failed { background: var(--error); }
+
+.subtask-list { margin-top: 12px; }
+
+.subtask-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.subtask-item:last-child { border-bottom: none; }
 </style>
 </head>
 <body>
@@ -552,9 +731,12 @@ tr:hover td { background: rgba(59,130,246,0.02); }
   <nav class="sidebar">
     <div class="sidebar-logo">Box<span>0</span></div>
     <div class="sidebar-nav">
-      <a href="#/machines" data-page="machines"><span class="nav-icon">M</span> Machines</a>
-      <a href="#/agents" data-page="agents"><span class="nav-icon">A</span> Agents</a>
-      <a href="#/users" data-page="users"><span class="nav-icon">U</span> Users</a>
+      <a href="#/tasks" data-page="tasks"><span class="nav-icon">T</span> Tasks</a>
+    </div>
+    <div class="sidebar-nav" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:8px">
+      <a href="#/agents" data-page="agents" style="font-size:13px;opacity:0.7"><span class="nav-icon">A</span> Agents</a>
+      <a href="#/machines" data-page="machines" style="font-size:13px;opacity:0.7"><span class="nav-icon">M</span> Machines</a>
+      <a href="#/users" data-page="users" style="font-size:13px;opacity:0.7"><span class="nav-icon">U</span> Users</a>
     </div>
     <div class="sidebar-group">
       <label>Workspace</label>
@@ -706,7 +888,7 @@ App.boot = function(data) {
 App.setWorkspace = function(name) {
   App.currentWorkspace = name;
   localStorage.setItem('b0_workspace', name);
-  App.router.navigate(location.hash || '#/machines');
+  App.router.navigate(location.hash || '#/tasks');
 };
 
 App.workspacePath = function(path) {
@@ -718,6 +900,7 @@ App.workspacePath = function(path) {
 // ============================================================
 App.router = {
   routes: {
+    '/tasks': function() { App.tasksPage.render(); },
     '/machines': function() { App.machines.render(); },
     '/agents': function() { App.agentsPage.render(); },
     '/workspaces': function() { App.workspacesPage.render(); },
@@ -730,7 +913,11 @@ App.router = {
   },
 
   onHashChange: function() {
-    var hash = location.hash || '#/machines';
+    // Clean up task page timers when navigating away
+    if (App.tasksPage._boardTimer) { clearInterval(App.tasksPage._boardTimer); App.tasksPage._boardTimer = null; }
+    if (App.tasksPage._chatTimer) { clearInterval(App.tasksPage._chatTimer); App.tasksPage._chatTimer = null; }
+
+    var hash = location.hash || '#/tasks';
     var path = hash.slice(1);
 
     document.querySelectorAll('.sidebar-nav a').forEach(function(a) {
@@ -738,6 +925,15 @@ App.router = {
     });
 
     var parts = path.split('/').filter(Boolean);
+
+    // /tasks/{taskId}
+    if (parts[0] === 'tasks' && parts[1]) {
+      App.tasksPage.render(decodeURIComponent(parts[1]));
+      document.querySelectorAll('.sidebar-nav a').forEach(function(a) {
+        a.classList.toggle('active', a.getAttribute('data-page') === 'tasks');
+      });
+      return;
+    }
 
     // /machines/{nodeId}
     if (parts[0] === 'machines' && parts[1]) {
@@ -762,7 +958,7 @@ App.router = {
     var base = '/' + (parts[0] || 'machines');
     var handler = App.router.routes[base];
     if (handler) handler();
-    else App.machines.render();
+    else App.tasksPage.render();
   },
 
   navigate: function(hash) {
@@ -879,6 +1075,209 @@ App.poll = {
       clearInterval(App.poll._timers[id]);
     });
     App.poll._timers = {};
+  }
+};
+
+// ============================================================
+// App.tasksPage - two-panel task view
+// ============================================================
+App.tasksPage = {
+  _boardTimer: null,
+  _chatTimer: null,
+  _selectedTaskId: null,
+  _tasks: [],
+
+  render: function(taskId) {
+    App.poll.stopAll();
+    if (App.tasksPage._boardTimer) clearInterval(App.tasksPage._boardTimer);
+    if (App.tasksPage._chatTimer) clearInterval(App.tasksPage._chatTimer);
+
+    var mc = document.getElementById('main-content');
+    mc.innerHTML =
+      '<div class="tasks-layout">' +
+        '<div class="tasks-chat" id="tasks-chat">' +
+          '<div class="tasks-chat-header" id="tasks-chat-header">Select a task</div>' +
+          '<div class="tasks-chat-messages" id="tasks-chat-messages">' +
+            '<div class="tasks-chat-empty">Select a task from the board, or create a new one.</div>' +
+          '</div>' +
+          '<div class="tasks-chat-input" id="tasks-chat-input" style="display:none">' +
+            '<input type="text" id="tasks-chat-field" placeholder="Send a message..." onkeydown="if(event.key===\'Enter\')App.tasksPage.sendMessage()">' +
+            '<button class="btn btn-primary" onclick="App.tasksPage.sendMessage()">Send</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="tasks-board" id="tasks-board">' +
+          '<div class="tasks-board-header">' +
+            '<h3>Tasks</h3>' +
+            '<button class="btn btn-primary btn-sm" onclick="App.tasksPage.showAdd()">+ Add</button>' +
+          '</div>' +
+          '<div id="tasks-board-list">Loading...</div>' +
+        '</div>' +
+      '</div>';
+
+    App.tasksPage._selectedTaskId = taskId || null;
+    App.tasksPage.loadBoard();
+    App.tasksPage._boardTimer = setInterval(function() { App.tasksPage.loadBoard(); }, 5000);
+
+    if (taskId) {
+      App.tasksPage.selectTask(taskId);
+    }
+  },
+
+  loadBoard: function() {
+    App.api.get(App.workspacePath('/tasks')).then(function(data) {
+      App.tasksPage._tasks = data.tasks || [];
+      App.tasksPage.renderBoard();
+    }).catch(function() {});
+  },
+
+  renderBoard: function() {
+    var tasks = App.tasksPage._tasks;
+    var groups = { running: [], needs_input: [], done: [], failed: [] };
+    tasks.forEach(function(t) {
+      if (groups[t.status]) groups[t.status].push(t);
+      else groups.running.push(t);
+    });
+
+    var html = '';
+
+    if (groups.running.length) {
+      html += '<div class="task-group"><div class="task-group-label">Running</div>';
+      groups.running.forEach(function(t) { html += App.tasksPage.renderCard(t); });
+      html += '</div>';
+    }
+
+    if (groups.needs_input.length) {
+      html += '<div class="task-group"><div class="task-group-label">Needs Input</div>';
+      groups.needs_input.forEach(function(t) { html += App.tasksPage.renderCard(t); });
+      html += '</div>';
+    }
+
+    if (groups.done.length) {
+      html += '<div class="task-group"><div class="task-group-label">Done</div>';
+      groups.done.forEach(function(t) { html += App.tasksPage.renderCard(t); });
+      html += '</div>';
+    }
+
+    if (groups.failed.length) {
+      html += '<div class="task-group"><div class="task-group-label">Failed</div>';
+      groups.failed.forEach(function(t) { html += App.tasksPage.renderCard(t); });
+      html += '</div>';
+    }
+
+    if (!tasks.length) {
+      html = '<div style="color:var(--text-secondary);font-size:13px;text-align:center;padding:40px 0">No tasks yet. Click + Add to create one.</div>';
+    }
+
+    document.getElementById('tasks-board-list').innerHTML = html;
+  },
+
+  renderCard: function(t) {
+    var sel = App.tasksPage._selectedTaskId === t.id ? ' selected' : '';
+    return '<div class="task-card' + sel + '" onclick="App.tasksPage.selectTask(\'' + escAttr(t.id) + '\')">' +
+      '<div class="task-card-title">' + esc(t.title) + '</div>' +
+      '<div class="task-card-meta">' +
+        '<span class="task-status-dot ' + esc(t.status) + '"></span> ' +
+        esc(t.status) + ' &middot; ' + timeAgo(t.created_at) +
+      '</div>' +
+    '</div>';
+  },
+
+  selectTask: function(taskId) {
+    App.tasksPage._selectedTaskId = taskId;
+    if (App.tasksPage._chatTimer) clearInterval(App.tasksPage._chatTimer);
+
+    App.tasksPage.renderBoard(); // update selected state
+    App.tasksPage.loadTask(taskId);
+    App.tasksPage._chatTimer = setInterval(function() { App.tasksPage.loadTask(taskId); }, 3000);
+  },
+
+  loadTask: function(taskId) {
+    App.api.get(App.workspacePath('/tasks/' + taskId)).then(function(data) {
+      App.tasksPage.renderChat(data);
+    }).catch(function() {});
+  },
+
+  renderChat: function(data) {
+    var task = data.task;
+    var messages = data.messages || [];
+    var subtasks = data.subtasks || [];
+
+    document.getElementById('tasks-chat-header').textContent = task.title;
+    document.getElementById('tasks-chat-input').style.display = 'flex';
+
+    var html = '';
+
+    // Render messages
+    messages.forEach(function(m) {
+      if (m.type === 'started') return; // skip internal messages
+
+      var isUser = m.type === 'request' || m.type === 'answer';
+      var cls = isUser ? 'user' : 'assistant';
+      var content = '';
+      if (m.content) {
+        content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+        // Unwrap JSON string wrapping
+        if (content.startsWith('"') && content.endsWith('"')) {
+          try { content = JSON.parse(content); } catch(e) {}
+        }
+      }
+      if (!content) return;
+
+      html += '<div class="chat-msg ' + cls + '">' +
+        '<div class="chat-msg-bubble">' + esc(content) + '</div>' +
+        '<div class="chat-msg-meta">' + timeAgo(m.created_at) + '</div>' +
+      '</div>';
+    });
+
+    // Render subtasks if any
+    if (subtasks.length) {
+      html += '<div class="subtask-list"><div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Sub-tasks</div>';
+      subtasks.forEach(function(st) {
+        var icon = st.status === 'done' ? '&#10003;' : st.status === 'running' ? '&#9679;' : '&#9675;';
+        html += '<div class="subtask-item">' +
+          '<span class="task-status-dot ' + esc(st.status) + '"></span> ' +
+          '<span>' + esc(st.title) + '</span>' +
+          '<span style="margin-left:auto;font-size:11px;color:var(--text-secondary)">' + esc(st.status) + '</span>' +
+        '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (!html) {
+      html = '<div class="tasks-chat-empty">Waiting for response...</div>';
+    }
+
+    var el = document.getElementById('tasks-chat-messages');
+    el.innerHTML = html;
+    el.scrollTop = el.scrollHeight;
+  },
+
+  sendMessage: function() {
+    var field = document.getElementById('tasks-chat-field');
+    var content = field.value.trim();
+    if (!content || !App.tasksPage._selectedTaskId) return;
+    field.value = '';
+
+    App.api.post(App.workspacePath('/tasks/' + App.tasksPage._selectedTaskId + '/messages'), {
+      content: content
+    }).then(function() {
+      App.tasksPage.loadTask(App.tasksPage._selectedTaskId);
+    }).catch(function(e) {
+      App.toast.error(e.message);
+    });
+  },
+
+  showAdd: function() {
+    var title = prompt('What do you need?');
+    if (!title || !title.trim()) return;
+
+    App.api.post(App.workspacePath('/tasks'), { title: title.trim() }).then(function(task) {
+      App.toast.success('Task created');
+      App.tasksPage.loadBoard();
+      App.tasksPage.selectTask(task.id);
+    }).catch(function(e) {
+      App.toast.error(e.message);
+    });
   }
 };
 

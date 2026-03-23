@@ -337,3 +337,43 @@ async fn test_cron_invalid_schedule() {
     let result = client.create_cron_job("admin", "agent", "invalid", "task").await;
     assert!(result.is_err());
 }
+
+#[tokio::test]
+async fn test_task_crud() {
+    let (url, key, _tmp) = start_test_server().await;
+    let client = admin_client(&url, &key);
+
+    // Need a lead agent for task creation
+    client.register_agent("admin", "lead", "Lead", "Orchestrate.", "local", "auto", false).await.unwrap();
+
+    // Create task
+    let task = client.create_task("admin", "Review the code").await.unwrap();
+    assert!(task.id.starts_with("task-"));
+    assert_eq!(task.status, "running");
+    assert_eq!(task.title, "Review the code");
+    assert_eq!(task.agent_name, "lead");
+
+    // List tasks
+    let tasks = client.list_tasks("admin").await.unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].id, task.id);
+}
+
+#[tokio::test]
+async fn test_task_status_on_done() {
+    let (url, key, _tmp) = start_test_server().await;
+    let client = admin_client(&url, &key);
+
+    // Create lead agent and a task
+    client.register_agent("admin", "lead", "Lead", "Orchestrate.", "local", "auto", false).await.unwrap();
+    let task = client.create_task("admin", "Test task").await.unwrap();
+
+    // Simulate daemon sending "done" on the task's thread
+    client.send_message("admin", "lead", &task.thread_id, "lead", "done", Some(&serde_json::json!("All done"))).await.unwrap();
+
+    // Task status should be updated to "done"
+    let tasks = client.list_tasks("admin").await.unwrap();
+    let updated = tasks.iter().find(|t| t.id == task.id).unwrap();
+    assert_eq!(updated.status, "done");
+    assert_eq!(updated.result.as_deref(), Some("All done"));
+}

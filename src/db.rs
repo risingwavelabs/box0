@@ -51,6 +51,26 @@ pub struct Agent {
     pub status: String,
     pub registered_by: String,
     pub temp: bool,
+    #[serde(default = "default_timeout")]
+    pub timeout: i64,
+    pub created_at: DateTime<Utc>,
+}
+
+fn default_timeout() -> i64 {
+    300
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Task {
+    pub id: String,
+    pub workspace_name: String,
+    pub title: String,
+    pub status: String,
+    pub agent_name: String,
+    pub thread_id: String,
+    pub parent_task_id: Option<String>,
+    pub result: Option<String>,
+    pub created_by: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -164,8 +184,27 @@ impl Database {
                 created_by TEXT NOT NULL,
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
+
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                workspace_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                agent_name TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                parent_task_id TEXT,
+                result TEXT,
+                created_by TEXT NOT NULL,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_tasks_workspace_status ON tasks(workspace_name, status);
+            CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id);
             ",
         )?;
+
+        // Migrations for existing databases
+        let _ = conn.execute("ALTER TABLE agents ADD COLUMN timeout INTEGER NOT NULL DEFAULT 300", []);
+
         Ok(())
     }
 
@@ -540,7 +579,7 @@ impl Database {
     // --- Agents ---
 
     fn parse_agent_row(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
-        let ts: String = row.get(8)?;
+        let ts: String = row.get(9)?;
         Ok(Agent {
             name: row.get(0)?,
             description: row.get(1)?,
@@ -550,11 +589,12 @@ impl Database {
             status: row.get(5)?,
             registered_by: row.get(6)?,
             temp: row.get::<_, i32>(7)? != 0,
+            timeout: row.get(8)?,
             created_at: Database::parse_ts(&ts),
         })
     }
 
-    const AGENT_COLS: &str = "name, description, instructions, machine_id, runtime, status, registered_by, temp, created_at";
+    const AGENT_COLS: &str = "name, description, instructions, machine_id, runtime, status, registered_by, temp, timeout, created_at";
 
     pub fn register_agent(
         &self,
@@ -589,6 +629,7 @@ impl Database {
             status: "active".to_string(),
             registered_by: registered_by.to_string(),
             temp,
+            timeout: 300,
             created_at: Self::parse_ts(&ts),
         })
     }
@@ -725,12 +766,12 @@ impl Database {
     ) -> Result<Vec<(String, Agent)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT workspace_name, name, description, instructions, machine_id, runtime, status, registered_by, temp, created_at FROM agents WHERE machine_id = ?1 AND status = 'active'",
+            "SELECT workspace_name, name, description, instructions, machine_id, runtime, status, registered_by, temp, timeout, created_at FROM agents WHERE machine_id = ?1 AND status = 'active'",
         )?;
         let agents = stmt
             .query_map(params![machine_id], |row| {
                 let workspace: String = row.get(0)?;
-                let ts: String = row.get(9)?;
+                let ts: String = row.get(10)?;
                 Ok((
                     workspace,
                     Agent {
@@ -742,6 +783,7 @@ impl Database {
                         status: row.get(6)?,
                         registered_by: row.get(7)?,
                         temp: row.get::<_, i32>(8)? != 0,
+                        timeout: row.get(9)?,
                         created_at: Database::parse_ts(&ts),
                     },
                 ))
@@ -780,6 +822,172 @@ impl Database {
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(messages)
+    }
+
+    // --- Tasks ---
+
+    pub fn create_task(
+        &self,
+        workspace_name: &str,
+        title: &str,
+        agent_name: &str,
+        thread_id: &str,
+        parent_task_id: Option<&str>,
+        created_by: &str,
+    ) -> Result<Task> {
+        let conn = self.conn.lock().unwrap();
+        let id = format!("task-{}", &Uuid::new_v4().to_string()[..8]);
+        conn.execute(
+            "INSERT INTO tasks (id, workspace_name, title, agent_name, thread_id, parent_task_id, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, workspace_name, title, agent_name, thread_id, parent_task_id, created_by],
+        )?;
+        let ts: String = conn.query_row(
+            "SELECT created_at FROM tasks WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        Ok(Task {
+            id,
+            workspace_name: workspace_name.to_string(),
+            title: title.to_string(),
+            status: "running".to_string(),
+            agent_name: agent_name.to_string(),
+            thread_id: thread_id.to_string(),
+            parent_task_id: parent_task_id.map(|s| s.to_string()),
+            result: None,
+            created_by: created_by.to_string(),
+            created_at: Self::parse_ts(&ts),
+        })
+    }
+
+    pub fn get_task(&self, workspace_name: &str, task_id: &str) -> Result<Option<Task>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, workspace_name, title, status, agent_name, thread_id, parent_task_id, result, created_by, created_at FROM tasks WHERE id = ?1 AND workspace_name = ?2",
+            params![task_id, workspace_name],
+            |row| {
+                let ts: String = row.get(9)?;
+                Ok(Task {
+                    id: row.get(0)?,
+                    workspace_name: row.get(1)?,
+                    title: row.get(2)?,
+                    status: row.get(3)?,
+                    agent_name: row.get(4)?,
+                    thread_id: row.get(5)?,
+                    parent_task_id: row.get(6)?,
+                    result: row.get(7)?,
+                    created_by: row.get(8)?,
+                    created_at: Database::parse_ts(&ts),
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn list_tasks(&self, workspace_name: &str) -> Result<Vec<Task>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, workspace_name, title, status, agent_name, thread_id, parent_task_id, result, created_by, created_at FROM tasks WHERE workspace_name = ?1 ORDER BY created_at DESC",
+        )?;
+        let tasks = stmt
+            .query_map(params![workspace_name], |row| {
+                let ts: String = row.get(9)?;
+                Ok(Task {
+                    id: row.get(0)?,
+                    workspace_name: row.get(1)?,
+                    title: row.get(2)?,
+                    status: row.get(3)?,
+                    agent_name: row.get(4)?,
+                    thread_id: row.get(5)?,
+                    parent_task_id: row.get(6)?,
+                    result: row.get(7)?,
+                    created_by: row.get(8)?,
+                    created_at: Database::parse_ts(&ts),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(tasks)
+    }
+
+    pub fn update_task_status(
+        &self,
+        workspace_name: &str,
+        task_id: &str,
+        status: &str,
+        result: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE tasks SET status = ?3, result = COALESCE(?4, result) WHERE id = ?1 AND workspace_name = ?2",
+            params![task_id, workspace_name, status, result],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_subtasks(&self, workspace_name: &str, parent_task_id: &str) -> Result<Vec<Task>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, workspace_name, title, status, agent_name, thread_id, parent_task_id, result, created_by, created_at FROM tasks WHERE workspace_name = ?1 AND parent_task_id = ?2 ORDER BY created_at ASC",
+        )?;
+        let tasks = stmt
+            .query_map(params![workspace_name, parent_task_id], |row| {
+                let ts: String = row.get(9)?;
+                Ok(Task {
+                    id: row.get(0)?,
+                    workspace_name: row.get(1)?,
+                    title: row.get(2)?,
+                    status: row.get(3)?,
+                    agent_name: row.get(4)?,
+                    thread_id: row.get(5)?,
+                    parent_task_id: row.get(6)?,
+                    result: row.get(7)?,
+                    created_by: row.get(8)?,
+                    created_at: Database::parse_ts(&ts),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(tasks)
+    }
+
+    pub fn get_task_by_thread(&self, workspace_name: &str, thread_id: &str) -> Result<Option<Task>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, workspace_name, title, status, agent_name, thread_id, parent_task_id, result, created_by, created_at FROM tasks WHERE workspace_name = ?1 AND thread_id = ?2",
+            params![workspace_name, thread_id],
+            |row| {
+                let ts: String = row.get(9)?;
+                Ok(Task {
+                    id: row.get(0)?,
+                    workspace_name: row.get(1)?,
+                    title: row.get(2)?,
+                    status: row.get(3)?,
+                    agent_name: row.get(4)?,
+                    thread_id: row.get(5)?,
+                    parent_task_id: row.get(6)?,
+                    result: row.get(7)?,
+                    created_by: row.get(8)?,
+                    created_at: Database::parse_ts(&ts),
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// Bootstrap lead agent in a workspace. No-op if already exists.
+    pub fn bootstrap_lead_agent(
+        &self,
+        workspace_name: &str,
+        admin_user_id: &str,
+        instructions: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by, temp, timeout) VALUES (?1, 'lead', 'Lead orchestrator agent', ?2, 'local', 'auto', ?3, 0, 1800)",
+            params![workspace_name, instructions, admin_user_id],
+        )?;
+        Ok(())
     }
 
     // --- Cron Jobs ---
@@ -1054,5 +1262,72 @@ mod tests {
         db.ack_inbox_message("alice", &msg.id).unwrap();
         let messages = db.get_inbox_messages("alice", "receiver", Some("unread"), None).unwrap();
         assert_eq!(messages.len(), 0);
+    }
+
+    #[test]
+    fn test_task_crud() {
+        let db = test_db();
+        let (alice, _) = db.create_user("alice", false).unwrap();
+
+        let task = db.create_task("alice", "Review PR #42", "lead", "thread-abc", None, &alice.id).unwrap();
+        assert!(task.id.starts_with("task-"));
+        assert_eq!(task.status, "running");
+        assert_eq!(task.title, "Review PR #42");
+
+        let fetched = db.get_task("alice", &task.id).unwrap();
+        assert!(fetched.is_some());
+        assert_eq!(fetched.unwrap().title, "Review PR #42");
+
+        let tasks = db.list_tasks("alice").unwrap();
+        assert_eq!(tasks.len(), 1);
+
+        db.update_task_status("alice", &task.id, "done", Some("All good")).unwrap();
+        let updated = db.get_task("alice", &task.id).unwrap().unwrap();
+        assert_eq!(updated.status, "done");
+        assert_eq!(updated.result.as_deref(), Some("All good"));
+    }
+
+    #[test]
+    fn test_task_subtasks() {
+        let db = test_db();
+        let (alice, _) = db.create_user("alice", false).unwrap();
+
+        let parent = db.create_task("alice", "SEO project", "lead", "thread-1", None, &alice.id).unwrap();
+        let _sub1 = db.create_task("alice", "Research keywords", "worker-1", "thread-2", Some(&parent.id), &alice.id).unwrap();
+        let _sub2 = db.create_task("alice", "Write blog", "worker-2", "thread-3", Some(&parent.id), &alice.id).unwrap();
+
+        let subs = db.get_subtasks("alice", &parent.id).unwrap();
+        assert_eq!(subs.len(), 2);
+    }
+
+    #[test]
+    fn test_task_by_thread() {
+        let db = test_db();
+        let (alice, _) = db.create_user("alice", false).unwrap();
+
+        let task = db.create_task("alice", "Test task", "lead", "thread-xyz", None, &alice.id).unwrap();
+        let found = db.get_task_by_thread("alice", "thread-xyz").unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, task.id);
+
+        let not_found = db.get_task_by_thread("alice", "thread-nope").unwrap();
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_bootstrap_lead_agent() {
+        let db = test_db();
+        let (alice, _) = db.create_user("alice", false).unwrap();
+
+        db.bootstrap_lead_agent("alice", &alice.id, "You are the lead.").unwrap();
+        let agent = db.get_agent("alice", "lead").unwrap();
+        assert!(agent.is_some());
+        let agent = agent.unwrap();
+        assert_eq!(agent.timeout, 1800);
+
+        // Second call is no-op
+        db.bootstrap_lead_agent("alice", &alice.id, "Updated instructions").unwrap();
+        let agent = db.get_agent("alice", "lead").unwrap().unwrap();
+        assert_eq!(agent.instructions, "You are the lead."); // unchanged
     }
 }

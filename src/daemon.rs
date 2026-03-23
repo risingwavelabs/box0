@@ -50,21 +50,23 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                     continue;
                 }
 
-                let _ = state.db.ack_inbox_message(tenant, &msg.id);
-
                 let permit = match semaphore.clone().try_acquire_owned() {
                     Ok(p) => p,
                     Err(_) => {
                         tracing::debug!("Max concurrent tasks reached");
-                        break;
+                        break; // Leave message unread so it gets picked up next poll
                     }
                 };
+
+                // Ack only after acquiring permit to prevent message loss
+                let _ = state.db.ack_inbox_message(tenant, &msg.id);
 
                 let state = state.clone();
                 let tenant = tenant.clone();
                 let instructions = agent.instructions.clone();
                 let agent_name = agent.name.clone();
                 let agent_runtime = agent.runtime.clone();
+                let agent_timeout = if agent.timeout > 0 { agent.timeout as u64 } else { TASK_TIMEOUT_SECS };
                 let workspace_root = workspace_root.clone();
                 let sessions = sessions.clone();
                 let msg = msg.clone();
@@ -113,7 +115,7 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                     );
 
                     let result =
-                        invoke_runtime(&agent_runtime, &instructions, &task_content, resume_session.as_deref(), Some(&agent_dir))
+                        invoke_runtime(&agent_runtime, &instructions, &task_content, resume_session.as_deref(), Some(&agent_dir), agent_timeout)
                             .await;
 
                     match result {
@@ -138,6 +140,10 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                                 "done",
                                 Some(&serde_json::json!(output.text)),
                             );
+                            // Update task status if this thread belongs to a task
+                            if let Ok(Some(task)) = state.db.get_task_by_thread(&tenant, &msg.thread_id) {
+                                let _ = state.db.update_task_status(&tenant, &task.id, "done", Some(&output.text));
+                            }
                         }
                         Err(e) => {
                             tracing::error!(
@@ -154,6 +160,10 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                                 "failed",
                                 Some(&serde_json::json!(e.to_string())),
                             );
+                            // Update task status if this thread belongs to a task
+                            if let Ok(Some(task)) = state.db.get_task_by_thread(&tenant, &msg.thread_id) {
+                                let _ = state.db.update_task_status(&tenant, &task.id, "failed", Some(&e.to_string()));
+                            }
                         }
                     }
                 });
@@ -223,18 +233,20 @@ pub async fn run_remote(server_url: &str, machine_id: &str, api_key: Option<&str
                     continue;
                 }
 
-                let _ = client.ack_message(workspace, &msg.id).await;
-
                 let permit = match semaphore.clone().try_acquire_owned() {
                     Ok(p) => p,
-                    Err(_) => break,
+                    Err(_) => break, // Leave message unread so it gets picked up next poll
                 };
+
+                // Ack only after acquiring permit to prevent message loss
+                let _ = client.ack_message(workspace, &msg.id).await;
 
                 let client = client.clone();
                 let workspace = workspace.clone();
                 let agent_name = agent.name.clone();
                 let instructions = agent.instructions.clone();
                 let agent_runtime = agent.runtime.clone();
+                let agent_timeout = if agent.timeout > 0 { agent.timeout as u64 } else { TASK_TIMEOUT_SECS };
                 let workspace_root = workspace_root.clone();
                 let sessions = sessions.clone();
                 let msg = msg.clone();
@@ -284,7 +296,7 @@ pub async fn run_remote(server_url: &str, machine_id: &str, api_key: Option<&str
                         .await;
 
                     let result =
-                        invoke_runtime(&agent_runtime, &instructions, &task_content, resume_session.as_deref(), Some(&agent_dir))
+                        invoke_runtime(&agent_runtime, &instructions, &task_content, resume_session.as_deref(), Some(&agent_dir), agent_timeout)
                             .await;
 
                     match result {
@@ -367,11 +379,12 @@ async fn invoke_runtime(
     task: &str,
     resume_session: Option<&str>,
     working_dir: Option<&std::path::Path>,
+    timeout_secs: u64,
 ) -> anyhow::Result<RuntimeOutput> {
     let resolved = resolve_runtime(runtime);
     match resolved {
-        "codex" => invoke_codex_cli(instructions, task, working_dir).await,
-        _ => invoke_claude_cli(instructions, task, resume_session, working_dir).await,
+        "codex" => invoke_codex_cli(instructions, task, working_dir, timeout_secs).await,
+        _ => invoke_claude_cli(instructions, task, resume_session, working_dir, timeout_secs).await,
     }
 }
 
@@ -382,6 +395,7 @@ async fn invoke_claude_cli(
     task: &str,
     resume_session: Option<&str>,
     working_dir: Option<&std::path::Path>,
+    timeout_secs: u64,
 ) -> anyhow::Result<RuntimeOutput> {
     let mut cmd = tokio::process::Command::new("claude");
     cmd.args(["--print", "--output-format", "json"]);
@@ -415,7 +429,7 @@ async fn invoke_claude_cli(
     }
 
     let result =
-        tokio::time::timeout(Duration::from_secs(TASK_TIMEOUT_SECS), child.wait_with_output())
+        tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
             .await;
 
     match result {
@@ -434,7 +448,7 @@ async fn invoke_claude_cli(
         Ok(Err(e)) => Err(anyhow::anyhow!("claude CLI error: {}", e)),
         Err(_) => Err(anyhow::anyhow!(
             "task timed out after {}s",
-            TASK_TIMEOUT_SECS
+            timeout_secs
         )),
     }
 }
@@ -462,6 +476,7 @@ async fn invoke_codex_cli(
     instructions: &str,
     task: &str,
     working_dir: Option<&std::path::Path>,
+    timeout_secs: u64,
 ) -> anyhow::Result<RuntimeOutput> {
     let prompt = format!("{}\n\n{}", instructions, task);
 
@@ -486,7 +501,7 @@ async fn invoke_codex_cli(
     })?;
 
     let result =
-        tokio::time::timeout(Duration::from_secs(TASK_TIMEOUT_SECS), child.wait_with_output())
+        tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
             .await;
 
     match result {
@@ -505,7 +520,7 @@ async fn invoke_codex_cli(
         Ok(Err(e)) => Err(anyhow::anyhow!("codex CLI error: {}", e)),
         Err(_) => Err(anyhow::anyhow!(
             "task timed out after {}s",
-            TASK_TIMEOUT_SECS
+            timeout_secs
         )),
     }
 }

@@ -95,6 +95,18 @@ struct InviteRequest {
     name: String,
 }
 
+#[derive(Deserialize)]
+struct CreateTaskRequest {
+    title: String,
+    #[serde(default)]
+    parent_task_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TaskMessageRequest {
+    content: String,
+}
+
 // --- Auth Middleware ---
 
 async fn auth_middleware(
@@ -183,10 +195,26 @@ async fn send_inbox_message_handler(
     match state.db.send_inbox_message(
         &workspace_name, &req.thread_id, &req.from, &agent_name, &req.msg_type, req.content.as_ref(),
     ) {
-        Ok(msg) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({"message_id": msg.id, "created_at": msg.created_at})),
-        ).into_response(),
+        Ok(msg) => {
+            // Auto-update task status based on message type
+            if req.msg_type == "done" || req.msg_type == "failed" {
+                if let Ok(Some(task)) = state.db.get_task_by_thread(&workspace_name, &req.thread_id) {
+                    let status = if req.msg_type == "done" { "done" } else { "failed" };
+                    let result = req.content.as_ref().and_then(|v| v.as_str());
+                    let _ = state.db.update_task_status(&workspace_name, &task.id, status, result);
+                }
+            }
+            if req.msg_type == "question" {
+                if let Ok(Some(task)) = state.db.get_task_by_thread(&workspace_name, &req.thread_id) {
+                    let _ = state.db.update_task_status(&workspace_name, &task.id, "needs_input", None);
+                }
+            }
+
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({"message_id": msg.id, "created_at": msg.created_at})),
+            ).into_response()
+        }
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
@@ -594,6 +622,124 @@ async fn list_users_handler(
     }
 }
 
+// --- Task handlers ---
+
+async fn create_task_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path(workspace_name): Path<String>,
+    Json(req): Json<CreateTaskRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
+        return e;
+    }
+
+    if req.title.trim().is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "title is required");
+    }
+
+    let thread_id = format!("thread-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+    let agent_name = "lead";
+
+    // Verify lead agent exists
+    match state.db.get_agent(&workspace_name, agent_name) {
+        Ok(Some(_)) => {}
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "lead agent not found in this workspace. Start the server to bootstrap it."),
+        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+
+    let from_id = format!("web-{}", caller.user.id);
+
+    let task = match state.db.create_task(
+        &workspace_name, &req.title, agent_name, &thread_id, req.parent_task_id.as_deref(), &caller.user.id,
+    ) {
+        Ok(t) => t,
+        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+
+    // Send inbox message to lead agent
+    if let Err(e) = state.db.send_inbox_message(
+        &workspace_name, &thread_id, &from_id, agent_name, "request", Some(&serde_json::json!(req.title)),
+    ) {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+    }
+
+    (StatusCode::CREATED, Json(serde_json::to_value(&task).unwrap())).into_response()
+}
+
+async fn list_tasks_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path(workspace_name): Path<String>,
+) -> impl IntoResponse {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
+        return e;
+    }
+    match state.db.list_tasks(&workspace_name) {
+        Ok(tasks) => (StatusCode::OK, Json(serde_json::json!({"tasks": tasks}))).into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn get_task_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path((workspace_name, task_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
+        return e;
+    }
+    let task = match state.db.get_task(&workspace_name, &task_id) {
+        Ok(Some(t)) => t,
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "task not found"),
+        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+
+    let messages = state.db.get_thread_messages(&workspace_name, &task.thread_id).unwrap_or_default();
+    let subtasks = state.db.get_subtasks(&workspace_name, &task_id).unwrap_or_default();
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "task": task,
+        "messages": messages,
+        "subtasks": subtasks,
+    }))).into_response()
+}
+
+async fn send_task_message_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path((workspace_name, task_id)): Path<(String, String)>,
+    Json(req): Json<TaskMessageRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
+        return e;
+    }
+
+    if req.content.trim().is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "content is required");
+    }
+
+    let task = match state.db.get_task(&workspace_name, &task_id) {
+        Ok(Some(t)) => t,
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "task not found"),
+        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+
+    let from_id = format!("web-{}", caller.user.id);
+
+    // Send as "answer" to resume the agent's session
+    if let Err(e) = state.db.send_inbox_message(
+        &workspace_name, &task.thread_id, &from_id, &task.agent_name, "answer", Some(&serde_json::json!(req.content)),
+    ) {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+    }
+
+    // Set task status back to running
+    let _ = state.db.update_task_status(&workspace_name, &task_id, "running", None);
+
+    (StatusCode::OK, Json(serde_json::json!({"status": "sent"}))).into_response()
+}
+
 // --- Helpers ---
 
 fn error_response(status: StatusCode, message: &str) -> axum::response::Response {
@@ -625,6 +771,13 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/machines/{machine_id}/agents", get(machine_agents_handler))
         .route("/users", get(list_users_handler))
         .route("/users/invite", post(invite_user_handler))
+        // Tasks (workspace-scoped)
+        .route("/workspaces/{workspace_name}/tasks",
+            get(list_tasks_handler).post(create_task_handler))
+        .route("/workspaces/{workspace_name}/tasks/{task_id}",
+            get(get_task_handler))
+        .route("/workspaces/{workspace_name}/tasks/{task_id}/messages",
+            post(send_task_message_handler))
         // Cron jobs (workspace-scoped)
         .route("/workspaces/{workspace_name}/cron",
             get(list_cron_handler).post(create_cron_handler))
@@ -804,6 +957,19 @@ pub async fn run(config: ServerConfig) {
     // Auto-register "local" machine owned by admin
     if let Ok(Some(admin_id)) = db.get_admin_user_id() {
         let _ = db.register_machine("local", &admin_id);
+
+        // Bootstrap lead agent in admin's workspace
+        let lead_instructions = crate::config::lead_agent_instructions(&server_url);
+        if let Some((_, ref admin_name, _)) = first_start_info {
+            let _ = db.bootstrap_lead_agent(admin_name, &admin_id, &lead_instructions);
+        } else {
+            // Not first start, but ensure lead agent exists in all workspaces the admin owns
+            if let Ok(workspaces) = db.list_workspaces_for_user(&admin_id) {
+                for ws in &workspaces {
+                    let _ = db.bootstrap_lead_agent(&ws.name, &admin_id, &lead_instructions);
+                }
+            }
+        }
     }
 
     // Resolve API key for dashboard URL: from first start or CLI config
