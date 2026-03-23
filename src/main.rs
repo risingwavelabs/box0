@@ -327,7 +327,7 @@ async fn main() {
             AgentCommand::Add { workspace, name, description, instructions, machine, runtime } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.register_agent(&workspace, &name, &description, &instructions, &machine, &runtime, false).await {
+                match client.register_agent(&workspace, &name, &description, &instructions, &machine, &runtime, "normal").await {
                     Ok(a) => println!("Agent \"{}\" registered in workspace \"{}\" on machine \"{}\" (runtime: {}).", a.name, workspace, a.machine_id, a.runtime),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
@@ -761,7 +761,7 @@ async fn cmd_agent_temp(workspace: &str, task: &str, instructions: &str, runtime
     let client = make_client(&cfg);
 
     let temp_name = format!("temp-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    if let Err(e) = client.register_agent(workspace, &temp_name, "", instructions, "local", runtime, true).await {
+    if let Err(e) = client.register_agent(workspace, &temp_name, "", instructions, "local", runtime, "temp").await {
         eprintln!("Error: {}", e); std::process::exit(1);
     }
 
@@ -774,7 +774,7 @@ async fn cmd_agent_temp(workspace: &str, task: &str, instructions: &str, runtime
                 workspace: workspace.to_string(),
                 task: task.to_string(),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                temp: true,
+                kind: "temp".to_string(),
             });
             let _ = config::CliConfig::save_pending(&pending);
             println!("{}", thread_id);
@@ -813,7 +813,7 @@ async fn cmd_delegate(workspace: &str, agent: &str, task: &str, continue_thread:
                 workspace: workspace.to_string(),
                 task: task.to_string(),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                temp: false,
+                kind: "normal".to_string(),
             });
             let _ = config::CliConfig::save_pending(&pending);
             println!("{}", thread_id);
@@ -869,7 +869,6 @@ async fn cmd_wait(wait_all: bool) {
                     } else { "?s".to_string() };
 
                     let content = msg.content.as_ref().and_then(|v| v.as_str()).unwrap_or("(no content)");
-                    let is_temp = thread_info.temp;
                     let agent_name = thread_info.agent.clone();
                     let thread_workspace = thread_info.workspace.clone();
 
@@ -997,7 +996,7 @@ async fn cmd_reply(workspace: &str, thread_id: &str, message: &str) {
                 workspace: workspace.to_string(),
                 task: message.to_string(),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                temp: false,
+                kind: "normal".to_string(),
             });
             let _ = config::CliConfig::save_pending(&pending);
             println!("Reply sent to {} (thread {}). Run b0 wait to collect response.", agent, thread_id);

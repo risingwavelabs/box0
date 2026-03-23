@@ -50,10 +50,15 @@ pub struct Agent {
     pub runtime: String,
     pub status: String,
     pub registered_by: String,
-    pub temp: bool,
+    #[serde(default = "default_kind")]
+    pub kind: String,
     #[serde(default = "default_timeout")]
     pub timeout: i64,
     pub created_at: DateTime<Utc>,
+}
+
+fn default_kind() -> String {
+    "normal".to_string()
 }
 
 fn default_timeout() -> i64 {
@@ -165,7 +170,7 @@ impl Database {
                 runtime TEXT NOT NULL DEFAULT 'auto',
                 status TEXT NOT NULL DEFAULT 'active',
                 registered_by TEXT NOT NULL DEFAULT '',
-                temp INTEGER NOT NULL DEFAULT 0,
+                kind TEXT NOT NULL DEFAULT 'normal',
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 PRIMARY KEY (workspace_name, name)
             );
@@ -204,6 +209,9 @@ impl Database {
 
         // Migrations for existing databases
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN timeout INTEGER NOT NULL DEFAULT 300", []);
+        let _ = conn.execute("ALTER TABLE agents ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal'", []);
+        // Migrate old temp column to kind
+        let _ = conn.execute("UPDATE agents SET kind = 'temp' WHERE temp = 1", []);
 
         Ok(())
     }
@@ -588,13 +596,13 @@ impl Database {
             runtime: row.get(4)?,
             status: row.get(5)?,
             registered_by: row.get(6)?,
-            temp: row.get::<_, i32>(7)? != 0,
+            kind: row.get(7)?,
             timeout: row.get(8)?,
             created_at: Database::parse_ts(&ts),
         })
     }
 
-    const AGENT_COLS: &str = "name, description, instructions, machine_id, runtime, status, registered_by, temp, timeout, created_at";
+    const AGENT_COLS: &str = "name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, created_at";
 
     pub fn register_agent(
         &self,
@@ -605,13 +613,13 @@ impl Database {
         machine_id: &str,
         runtime: &str,
         registered_by: &str,
-        temp: bool,
+        kind: &str,
     ) -> Result<Agent> {
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
-            "INSERT INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by, temp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![workspace_name, name, description, instructions, machine_id, runtime, registered_by, temp as i32],
+            "INSERT INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind],
         )?;
 
         let ts: String = conn.query_row(
@@ -628,7 +636,7 @@ impl Database {
             runtime: runtime.to_string(),
             status: "active".to_string(),
             registered_by: registered_by.to_string(),
-            temp,
+            kind: kind.to_string(),
             timeout: 300,
             created_at: Self::parse_ts(&ts),
         })
@@ -637,7 +645,7 @@ impl Database {
     pub fn list_agents(&self, workspace_name: &str) -> Result<Vec<Agent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            &format!("SELECT {} FROM agents WHERE workspace_name = ?1 AND temp = 0 ORDER BY created_at ASC", Self::AGENT_COLS),
+            &format!("SELECT {} FROM agents WHERE workspace_name = ?1 AND kind = 'normal' ORDER BY created_at ASC", Self::AGENT_COLS),
         )?;
         let agents = stmt
             .query_map(params![workspace_name], Self::parse_agent_row)?
@@ -766,7 +774,7 @@ impl Database {
     ) -> Result<Vec<(String, Agent)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT workspace_name, name, description, instructions, machine_id, runtime, status, registered_by, temp, timeout, created_at FROM agents WHERE machine_id = ?1 AND status = 'active'",
+            "SELECT workspace_name, name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, created_at FROM agents WHERE machine_id = ?1 AND status = 'active'",
         )?;
         let agents = stmt
             .query_map(params![machine_id], |row| {
@@ -782,7 +790,7 @@ impl Database {
                         runtime: row.get(5)?,
                         status: row.get(6)?,
                         registered_by: row.get(7)?,
-                        temp: row.get::<_, i32>(8)? != 0,
+                        kind: row.get(8)?,
                         timeout: row.get(9)?,
                         created_at: Database::parse_ts(&ts),
                     },
@@ -995,7 +1003,7 @@ impl Database {
             .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string();
         let deleted = conn.execute(
-            "DELETE FROM agents WHERE temp = 1 AND created_at < ?1",
+            "DELETE FROM agents WHERE kind = 'temp' AND created_at < ?1",
             params![cutoff],
         )?;
         Ok(deleted)
@@ -1198,7 +1206,7 @@ mod tests {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
 
-        db.register_agent("alice", "reviewer", "Code reviewer", "Review code.", "local", "auto", &alice.id, false)
+        db.register_agent("alice", "reviewer", "Code reviewer", "Review code.", "local", "auto", &alice.id, "normal")
             .unwrap();
 
         let agents = db.list_agents("alice").unwrap();
@@ -1213,7 +1221,7 @@ mod tests {
         // But visible in shared workspace
         db.create_workspace("team", &alice.id).unwrap();
         db.add_workspace_member("team", &bob.id).unwrap();
-        db.register_agent("team", "shared-reviewer", "Shared reviewer", "Review.", "local", "auto", &alice.id, false)
+        db.register_agent("team", "shared-reviewer", "Shared reviewer", "Review.", "local", "auto", &alice.id, "normal")
             .unwrap();
 
         let team_agents = db.list_agents("team").unwrap();
@@ -1246,7 +1254,7 @@ mod tests {
         db.create_workspace("team", &alice.id).unwrap();
         db.add_workspace_member("team", &bob.id).unwrap();
 
-        db.register_agent("team", "reviewer", "Reviewer", "Review.", "local", "auto", &alice.id, false)
+        db.register_agent("team", "reviewer", "Reviewer", "Review.", "local", "auto", &alice.id, "normal")
             .unwrap();
 
         // Bob cannot remove Alice's agent

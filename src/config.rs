@@ -436,6 +436,10 @@ pub struct PendingThread {
     pub workspace: String,
     pub task: String,
     pub created_at: String,
-    #[serde(default)]
-    pub temp: bool,
+    #[serde(default = "default_kind_normal_str")]
+    pub kind: String,
+}
+
+fn default_kind_normal_str() -> String {
+    "normal".to_string()
 }
