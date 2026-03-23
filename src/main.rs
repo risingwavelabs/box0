@@ -320,7 +320,7 @@ async fn main() {
             AgentCommand::Add { workspace, name, description, instructions, machine, runtime } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.register_agent(&workspace, &name, &description, &instructions, &machine, &runtime).await {
+                match client.register_agent(&workspace, &name, &description, &instructions, &machine, &runtime, false).await {
                     Ok(a) => println!("Agent \"{}\" registered in workspace \"{}\" on machine \"{}\" (runtime: {}).", a.name, workspace, a.machine_id, a.runtime),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
@@ -716,7 +716,7 @@ async fn cmd_agent_temp(workspace: &str, task: &str, instructions: &str) {
     let client = make_client(&cfg);
 
     let temp_name = format!("temp-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    if let Err(e) = client.register_agent(workspace, &temp_name, "", instructions, "local", "auto").await {
+    if let Err(e) = client.register_agent(workspace, &temp_name, "", instructions, "local", "auto", true).await {
         eprintln!("Error: {}", e); std::process::exit(1);
     }
 

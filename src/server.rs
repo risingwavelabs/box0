@@ -63,6 +63,8 @@ struct RegisterAgentRequest {
     machine_id: String,
     #[serde(default = "default_runtime")]
     runtime: String,
+    #[serde(default)]
+    temp: bool,
 }
 
 fn default_machine_id() -> String {
@@ -284,7 +286,7 @@ async fn register_agent_handler(
         }
     }
 
-    match state.db.register_agent(&workspace_name, &req.name, &req.description, &req.instructions, &req.machine_id, &req.runtime, &caller.user.id) {
+    match state.db.register_agent(&workspace_name, &req.name, &req.description, &req.instructions, &req.machine_id, &req.runtime, &caller.user.id, req.temp) {
         Ok(agent) => (StatusCode::CREATED, Json(serde_json::to_value(agent).unwrap())).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
