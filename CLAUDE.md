@@ -11,6 +11,7 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
 - README code blocks must be copy-paste safe. No inline comments on the same line as commands. No blocking commands (like `b0 server`) in the same block as other commands. Use blockquotes for conversation examples, not code blocks.
 - Always test changes before committing. Run `cargo test` at minimum (unit + integration tests). For user-facing features, run `tests/e2e.sh` which requires Claude Code or Codex.
 - After code changes, always update README.md, CLAUDE.md, docs/, and the skill content in config.rs if affected. This is critical.
+- SKILL.md (repo root) and config.rs `skill_content()` must stay in sync. Any change to CLI commands, flags, or agent behavior must be reflected in both. The usage section of SKILL.md and the body of `skill_content()` should be identical.
 - Commit messages: imperative mood, concise first line, details in body.
 - No documentation files unless explicitly requested.
 
