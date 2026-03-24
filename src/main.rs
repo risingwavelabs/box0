@@ -875,7 +875,7 @@ async fn cmd_wait(wait_all: bool) {
                     match msg.msg_type.as_str() {
                         "started" => {
                             status.insert(agent_name.clone(), "running");
-                            // Clear and reprint status
+                            let _ = client.ack_message(workspace, &msg.id).await;
                             clear_status(is_tty, status_lines_printed);
                             status_lines_printed = 0;
                             print_status(&status, &pending, is_tty, &mut status_lines_printed);
@@ -913,16 +913,19 @@ async fn cmd_wait(wait_all: bool) {
                             }
                         }
                         "question" => {
+                            let _ = client.ack_message(workspace, &msg.id).await;
                             clear_status(is_tty, status_lines_printed);
                             status_lines_printed = 0;
                             println!("\n{} asks (thread {}): {}\n  -> Use: b0 reply --workspace {} {} \"<your answer>\"",
                                 agent_name, msg.thread_id, content, thread_workspace, msg.thread_id);
                             print_status(&status, &pending, is_tty, &mut status_lines_printed);
                         }
-                        _ => {}
+                        _ => {
+                            let _ = client.ack_message(workspace, &msg.id).await;
+                        }
                     }
                 }
-                let _ = client.ack_message(workspace, &msg.id).await;
+                // Messages for threads NOT in our pending list: leave unread for other sessions
             }
         }
 
