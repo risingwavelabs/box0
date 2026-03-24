@@ -20,7 +20,7 @@ Start the server:
 b0 server
 ```
 
-Teach your agent to use Box0 (pick one or both):
+Teach your agent to use Box0 ([how skills work](docs/skills.md)):
 
 ```bash
 b0 skill install claude-code
@@ -134,6 +134,7 @@ b0 skill install codex                       Install skill for Codex
 
 ## Learn more
 
+- [Skills](docs/skills.md) - how skills teach your agent to use Box0
 - [Multi-machine setup](docs/multi-machine.md) - distribute agents across machines
 - [Cron jobs](docs/cron.md) - schedule recurring tasks
 - [Slack notifications](docs/slack.md) - get notified when agents finish
