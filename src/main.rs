@@ -73,6 +73,9 @@ enum Command {
         /// Wait for all pending tasks (default: return on first completion)
         #[arg(long)]
         all: bool,
+        /// Non-blocking: return immediately if nothing is done yet
+        #[arg(long)]
+        timeout: Option<f64>,
     },
     /// Reply to an agent's question
     Reply {
@@ -663,7 +666,7 @@ async fn main() {
             cmd_delegate(&workspace, &resolved_agent, &task_content, thread.as_deref()).await;
         }
 
-        Command::Wait { all } => cmd_wait(all).await,
+        Command::Wait { all, timeout } => cmd_wait(all, timeout).await,
 
         Command::Reply { workspace, thread_id, message } => { let workspace = resolve_workspace(workspace);
             cmd_reply(&workspace, &thread_id, &message).await;
@@ -844,10 +847,12 @@ async fn cmd_delegate(workspace: &str, agent: &str, task: &str, continue_thread:
     }
 }
 
-async fn cmd_wait(wait_all: bool) {
+async fn cmd_wait(wait_all: bool, timeout: Option<f64>) {
     let mut cfg = config::CliConfig::load();
     let lead_id = cfg.lead_id();
     let client = make_client(&cfg);
+    let non_blocking = timeout == Some(0.0);
+    let poll_timeout = if non_blocking { Some(0.0) } else { Some(2.0) };
 
     let mut pending = config::CliConfig::load_pending();
     if pending.threads.is_empty() {
@@ -856,7 +861,9 @@ async fn cmd_wait(wait_all: bool) {
     }
 
     let total = pending.threads.len();
-    println!("Waiting for {} task(s)...\n", total);
+    if !non_blocking {
+        println!("Waiting for {} task(s)...\n", total);
+    }
 
     // Track per-agent status: "queued" or "running"
     let mut status: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
@@ -879,7 +886,7 @@ async fn cmd_wait(wait_all: bool) {
         let workspaces: Vec<String> = pending.threads.values().map(|t| t.workspace.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
 
         for workspace in &workspaces {
-            let messages = match client.get_inbox(workspace, &lead_id, Some("unread"), Some(2.0)).await {
+            let messages = match client.get_inbox(workspace, &lead_id, Some("unread"), poll_timeout).await {
                 Ok(m) => m,
                 Err(_) => continue,
             };
@@ -959,6 +966,11 @@ async fn cmd_wait(wait_all: bool) {
                 }
                 // Messages for threads NOT in our pending list: leave unread for other sessions
             }
+        }
+
+        // Non-blocking: exit after one poll cycle
+        if non_blocking {
+            break;
         }
 
         // Refresh elapsed times in status display
