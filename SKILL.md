@@ -98,7 +98,8 @@ b0 status                                              # check pending tasks
 b0 agent temp "<task>"                                 # one-off task, no named agent
 b0 agent add <name> --instructions "..."               # create a named agent
 b0 agent remove <name>                                 # delete an agent
-b0 cron add --every <interval> "<task>"                # schedule recurring task (30s/5m/1h/6h/1d)
+b0 cron add --every <interval> "<task>"                # schedule recurring task (auto-creates temp agent)
+b0 cron add --agent <name> --every <interval> "<task>" # schedule with existing agent
 b0 cron ls                                             # list scheduled tasks
 b0 cron remove <id>                                    # remove a scheduled task
 ```
