@@ -39,38 +39,11 @@ Box0 handles all of this:
 
 > Have the implementer add input validation to the signup form. Then have the attacker try to bypass it. Iterate until the attacker gives up.
 
-## How it works (single-node scenario)
+## How it works
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Your Machine                         │
-│                                                             │
-│   ┌─────────────────┐         ┌───────────────────────────┐ │
-│   │   Your Agent    │         │       Box0 Server         │ │
-│   │  (Claude Code / │──b0────▶│                           │ │
-│   │   Codex / You)  │ delegate│  ┌────────┐  ┌────────┐   │ │
-│   └─────────────────┘         │  │ Inbox  │  │  DB    │   │ │
-│                               │  └────────┘  └────────┘   │ │
-│   ┌─────────────────┐         │        ▲                  │ │
-│   │   Web Dashboard │◀────────│        │                  │ │
-│   │  (browser :8080)│  serves │        │ poll             │ │
-│   └─────────────────┘         └────────┼──────────────────┘ │
-│                                        │                    │
-│              ┌──────────────────────── ┼──────────────────┐ │
-│              │    Node Daemon          │                  │ │
-│              │                         ▼                  │ │
-│              │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │ │
-│              │  │ worker-1 │  │ worker-2 │  │ worker-3 │  │ │
-│              │  │(optimist │  │(pessimist│  │(realist) │  │ │
-│              │  │  Claude) │  │  Codex)  │  │  Claude) │  │ │
-│              │  └──────────┘  └──────────┘  └──────────┘  │ │
-│              └────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-```
+Your agent sends tasks to the Box0 server via `b0 delegate`. The server stores them in an inbox. The daemon picks up each task, spawns a separate Claude Code (or Codex) process, and writes the results back. Your agent calls `b0 wait` to collect the responses.
 
-Your agent sends tasks to the Box0 server via `b0 delegate`. The server stores them in an inbox. A node daemon polls the inbox, spawns a separate Claude Code (or Codex) process for each worker, and writes the results back. Your agent calls `b0 wait` to collect the responses.
-
-Each worker runs in its own isolated directory. Workers can also run across multiple machines. See [Multi-machine](docs/multi-machine.md).
+Each agent runs in its own isolated directory. Agents can also run across multiple machines. See [Multi-machine](docs/multi-machine.md).
 
 ## Getting started
 
