@@ -6,6 +6,12 @@ Open-source multi-agent platform. Run AI agents in parallel on one machine or ma
   <img src="docs/hero.svg" alt="Box0 Architecture" width="800">
 </p>
 
+## Agent onboarding
+
+```
+Read https://raw.githubusercontent.com/risingwavelabs/box0/main/SKILL.md and follow the instructions to install and configure Box0
+```
+
 ## Getting started
 
 Install:
