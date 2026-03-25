@@ -75,9 +75,9 @@ Max concurrency: 4 concurrent tasks. Timeout: 300 seconds per task (configurable
 
 ## Data model
 
-- **Machines** belong to the server, not to workspaces. They are physical compute resources shared across all workspaces. `b0 server` auto-creates a `local` machine. Other machines join via `b0 machine join`. Any workspace's agents can run on any machine.
-- **Workspaces** provide tenant isolation for agents and tasks. They do not own machines. Each user gets a personal workspace on creation.
-- **Agents** belong to a workspace and are assigned to a machine. Workspace controls who can see the agent. Machine controls where it runs.
+- **Machines** are owned by users. Each user can only see and use their own machines. `b0 server` auto-creates a `local` machine owned by the admin. Other machines join via `b0 machine join`. Use `--no-local` for cloud/coordinator servers that don't run agents.
+- **Workspaces** provide tenant isolation for agents and tasks. Each user gets a personal workspace on creation.
+- **Agents** belong to a workspace and are assigned to a machine. The machine must be owned by the user creating the agent. Workspace controls who can see the agent. Machine controls where it runs.
 - **Users** have unique API keys. Keys identify users, not workspaces.
 - **Inbox messages** are the task queue. Each message targets an agent and carries the task content.
 - **Tasks** are user-facing work items (Web UI). Each task has a status, conversation thread, and optional sub-tasks.

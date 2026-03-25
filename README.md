@@ -15,7 +15,7 @@ Box0 runs multiple AI agents in parallel across your machines. You create agents
 
 A **server** coordinates everything. It stores agent definitions, routes tasks, runs the scheduler, and serves a web dashboard. Start one with `b0 server`.
 
-**Machines** are computers that run agents. When the server starts, it registers itself as the `local` machine. Add more with `b0 machine join`. Each machine uses its own Claude Code or Codex credentials. Machines belong to the server and are shared across all workspaces.
+**Machines** are computers that run agents. When the server starts, it registers itself as the `local` machine. Add more with `b0 machine join`. Each machine uses its own Claude Code or Codex credentials. Machines are owned by the user who registers them.
 
 **Workspaces** organize agents by team. Each user gets a personal workspace. Create shared ones with `b0 workspace create` and invite members. Agents in a workspace are visible to all its members.
 

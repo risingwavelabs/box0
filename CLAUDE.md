@@ -28,9 +28,9 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
 
 ## Resource model
 
-- **Machines** belong to the server, not to workspaces. They are physical compute resources shared across all workspaces. Any workspace's agent can be assigned to any machine. `b0 server` auto-creates a `local` machine. Other machines join via `b0 machine join`.
-- **Workspaces** are logical groups for organizing agents, tasks, and team access. They do not own machines.
-- **Agents** belong to a workspace and are assigned to a machine. Workspace controls visibility. Machine controls where the agent runs.
+- **Machines** are owned by users. Each user can only see and use their own machines. `b0 server` auto-creates a `local` machine owned by the admin. Other machines join via `b0 machine join`. Use `--no-local` to skip local machine registration (for cloud/coordinator servers).
+- **Workspaces** are logical groups for organizing agents, tasks, and team access.
+- **Agents** belong to a workspace and are assigned to a machine. The machine must be owned by the user creating the agent. Workspace controls visibility. Machine controls where the agent runs.
 
 ## Auth model
 
