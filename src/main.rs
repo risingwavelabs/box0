@@ -255,7 +255,17 @@ enum CronCommand {
     },
 }
 
+fn require_config(cfg: &config::CliConfig) {
+    if cfg.api_key.is_none() {
+        eprintln!("Not connected to a server. Run one of:");
+        eprintln!("  b0 server                              Start a local server");
+        eprintln!("  b0 login <url> --key <key>             Connect to an existing server");
+        std::process::exit(1);
+    }
+}
+
 fn make_client(cfg: &config::CliConfig) -> client::BhClient {
+    require_config(cfg);
     match &cfg.api_key {
         Some(key) => client::BhClient::with_api_key(&cfg.server_url(), key),
         None => client::BhClient::new(&cfg.server_url()),
@@ -465,7 +475,13 @@ async fn main() {
         Command::Machine { command } => match command {
             MachineCommand::Join { server_url, name, key } => {
                 let cfg = config::CliConfig::load();
-                let url = server_url.unwrap_or_else(|| cfg.server_url());
+                let url = match server_url {
+                    Some(u) => u,
+                    None => {
+                        require_config(&cfg);
+                        cfg.server_url()
+                    }
+                };
                 let api_key = key.or_else(|| cfg.api_key.clone());
                 cmd_machine_join(&url, name.as_deref(), api_key.as_deref()).await;
             }
