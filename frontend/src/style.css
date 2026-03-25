@@ -1055,6 +1055,68 @@ tr:hover td {
   margin-bottom: 6px;
 }
 
+.node-status-icon {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.node-status-icon.pending,
+.node-status-icon.ready {
+  background: var(--border);
+  color: var(--text-secondary);
+}
+
+.node-status-icon.running {
+  background: var(--primary);
+  color: #fff;
+  animation: spin 1.5s linear infinite;
+}
+
+.node-status-icon.done {
+  background: var(--success);
+  color: #fff;
+}
+
+.node-status-icon.failed {
+  background: var(--error);
+  color: #fff;
+}
+
+.node-status-icon.waiting {
+  background: var(--warning);
+  color: #fff;
+}
+
+.node-status-icon.skipped {
+  background: var(--border);
+  color: var(--text-secondary);
+}
+
+.workflow-node-card-status-failed {
+  border-color: var(--error) !important;
+  box-shadow: 0 0 0 1px var(--error), 0 8px 20px rgba(239, 68, 68, 0.12);
+}
+
+.workflow-node-card-status-running {
+  border-color: var(--primary) !important;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .workflow-node-card-title {
   font-size: 14px;
   font-weight: 600;

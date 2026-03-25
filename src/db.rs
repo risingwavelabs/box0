@@ -181,6 +181,7 @@ pub struct WorkflowRun {
     pub workspace_name: String,
     pub status: String,
     pub input: Option<String>,
+    pub definition_snapshot: Option<String>,
     pub started_by: String,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -393,6 +394,7 @@ impl Database {
                 workspace_name TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'queued',
                 input TEXT,
+                definition_snapshot TEXT,
                 started_by TEXT NOT NULL,
                 started_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 finished_at TEXT,
@@ -438,6 +440,11 @@ impl Database {
         let _ = conn.execute(
             "UPDATE agents SET timeout = ?1 WHERE timeout = 300",
             params![DEFAULT_AGENT_TIMEOUT_SECS],
+        );
+        // Add definition_snapshot column for workflow runs
+        let _ = conn.execute(
+            "ALTER TABLE workflow_runs ADD COLUMN definition_snapshot TEXT",
+            [],
         );
 
         Ok(())
@@ -1556,18 +1563,19 @@ impl Database {
     }
 
     fn parse_workflow_run_row(row: &rusqlite::Row) -> rusqlite::Result<WorkflowRun> {
-        let started_at: String = row.get(6)?;
-        let finished_at: Option<String> = row.get(7)?;
+        let started_at: String = row.get(7)?;
+        let finished_at: Option<String> = row.get(8)?;
         Ok(WorkflowRun {
             id: row.get(0)?,
             workflow_id: row.get(1)?,
             workspace_name: row.get(2)?,
             status: row.get(3)?,
             input: row.get(4)?,
-            started_by: row.get(5)?,
+            definition_snapshot: row.get(5)?,
+            started_by: row.get(6)?,
             started_at: Database::parse_ts(&started_at),
             finished_at: Database::parse_optional_ts(finished_at),
-            error: row.get(8)?,
+            error: row.get(9)?,
         })
     }
 
@@ -1930,12 +1938,29 @@ impl Database {
             anyhow::bail!("workflow has no nodes");
         }
 
+        let edges = {
+            let mut edge_stmt = tx.prepare(
+                "SELECT id, workflow_id, source_node_id, target_node_id, created_at
+                 FROM workflow_edges WHERE workflow_id = ?1",
+            )?;
+            edge_stmt
+                .query_map(params![workflow_id], Self::parse_workflow_edge_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        let definition = WorkflowDefinition {
+            workflow: workflow.clone(),
+            nodes: nodes.clone(),
+            edges,
+        };
+        let snapshot = serde_json::to_string(&definition).ok();
+
         let run_id = format!("wfr-{}", &Uuid::new_v4().to_string()[..8]);
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         tx.execute(
-            "INSERT INTO workflow_runs (id, workflow_id, workspace_name, status, input, started_by, started_at)
-             VALUES (?1, ?2, ?3, 'queued', ?4, ?5, ?6)",
-            params![run_id, workflow.id, workspace_name, input, started_by, now],
+            "INSERT INTO workflow_runs (id, workflow_id, workspace_name, status, input, definition_snapshot, started_by, started_at)
+             VALUES (?1, ?2, ?3, 'queued', ?4, ?5, ?6, ?7)",
+            params![run_id, workflow.id, workspace_name, input, snapshot, started_by, now],
         )?;
 
         for node in nodes {
@@ -1964,7 +1989,7 @@ impl Database {
         }
 
         let run = tx.query_row(
-            "SELECT id, workflow_id, workspace_name, status, input, started_by, started_at, finished_at, error
+            "SELECT id, workflow_id, workspace_name, status, input, definition_snapshot, started_by, started_at, finished_at, error
              FROM workflow_runs WHERE id = ?1",
             params![run_id],
             Self::parse_workflow_run_row,
@@ -1981,7 +2006,7 @@ impl Database {
         limit: i64,
     ) -> Result<Vec<WorkflowRun>> {
         let conn = self.conn.lock().unwrap();
-        let mut query = "SELECT id, workflow_id, workspace_name, status, input, started_by, started_at, finished_at, error
+        let mut query = "SELECT id, workflow_id, workspace_name, status, input, definition_snapshot, started_by, started_at, finished_at, error
                          FROM workflow_runs WHERE workspace_name = ?1"
             .to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> =
@@ -2010,7 +2035,7 @@ impl Database {
     ) -> Result<Option<WorkflowRun>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, workflow_id, workspace_name, status, input, started_by, started_at, finished_at, error
+            "SELECT id, workflow_id, workspace_name, status, input, definition_snapshot, started_by, started_at, finished_at, error
              FROM workflow_runs WHERE workspace_name = ?1 AND id = ?2",
             params![workspace_name, run_id],
             Self::parse_workflow_run_row,
@@ -2086,6 +2111,15 @@ impl Database {
         Ok(())
     }
 
+    pub fn mark_workflow_step_run_ready(&self, step_run_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE workflow_step_runs SET status = 'ready' WHERE id = ?1 AND status = 'pending'",
+            params![step_run_id],
+        )?;
+        Ok(())
+    }
+
     pub fn mark_workflow_step_run_started(&self, step_run_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -2154,6 +2188,47 @@ impl Database {
                 params![run_id, step_run_id],
             )?;
         }
+        Ok(())
+    }
+
+    /// Find workflow runs that have been in a non-terminal state for longer than `max_age_secs`.
+    pub fn get_stale_workflow_runs(&self, max_age_secs: i64) -> Result<Vec<WorkflowRun>> {
+        let conn = self.conn.lock().unwrap();
+        let cutoff = (Utc::now() - chrono::Duration::seconds(max_age_secs))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let mut stmt = conn.prepare(
+            "SELECT id, workflow_id, workspace_name, status, input, definition_snapshot, started_by, started_at, finished_at, error
+             FROM workflow_runs
+             WHERE status IN ('queued', 'running', 'waiting_for_input')
+               AND started_at < ?1",
+        )?;
+        let runs = stmt
+            .query_map(params![cutoff], Self::parse_workflow_run_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(runs)
+    }
+
+    /// Fail all non-terminal step runs in a workflow run and mark the run as failed.
+    pub fn timeout_workflow_run(
+        &self,
+        workspace_name: &str,
+        run_id: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        conn.execute(
+            "UPDATE workflow_step_runs
+             SET status = 'failed', error = 'workflow run timed out', finished_at = ?2
+             WHERE workflow_run_id = ?1 AND status IN ('pending', 'ready', 'running', 'waiting_for_input')",
+            params![run_id, now],
+        )?;
+        conn.execute(
+            "UPDATE workflow_runs
+             SET status = 'failed', error = 'workflow run timed out', finished_at = ?3
+             WHERE workspace_name = ?1 AND id = ?2",
+            params![workspace_name, run_id, now],
+        )?;
         Ok(())
     }
 

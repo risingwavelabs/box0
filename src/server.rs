@@ -195,6 +195,18 @@ struct WorkflowStepInputRequest {
     input: String,
 }
 
+#[derive(Deserialize)]
+struct RetryStepQuery {
+    /// "all" (default): reset this step and all descendants.
+    /// "self": reset only this step.
+    #[serde(default = "default_retry_scope")]
+    scope: String,
+}
+
+fn default_retry_scope() -> String {
+    "all".to_string()
+}
+
 // --- Auth Middleware ---
 
 async fn auth_middleware(
@@ -1426,26 +1438,36 @@ fn compose_workflow_step_input(
 }
 
 fn compute_workflow_run_state(step_runs: &[WorkflowStepRun]) -> (&'static str, Option<String>) {
-    if let Some(failed) = step_runs.iter().find(|step| step.status == "failed") {
-        return (
-            "failed",
-            failed.error.clone().or_else(|| failed.output.clone()),
-        );
-    }
-    if step_runs
+    let has_failed = step_runs.iter().any(|step| step.status == "failed");
+    let has_running = step_runs.iter().any(|step| step.status == "running");
+    let has_ready = step_runs.iter().any(|step| step.status == "ready");
+    let has_pending = step_runs.iter().any(|step| step.status == "pending");
+    let has_waiting = step_runs
         .iter()
-        .all(|step| matches!(step.status.as_str(), "done" | "skipped"))
-    {
+        .any(|step| step.status == "waiting_for_input");
+    let all_terminal = step_runs
+        .iter()
+        .all(|step| matches!(step.status.as_str(), "done" | "skipped" | "failed"));
+
+    if all_terminal {
+        if has_failed {
+            let error = step_runs
+                .iter()
+                .find(|step| step.status == "failed")
+                .and_then(|step| step.error.clone().or_else(|| step.output.clone()));
+            return ("failed", error);
+        }
         return ("done", None);
     }
-    if step_runs
-        .iter()
-        .any(|step| step.status == "waiting_for_input")
-    {
+    // Still in progress: some steps are running/ready/pending alongside a failure
+    if has_waiting {
         return ("waiting_for_input", None);
     }
-    if step_runs.iter().any(|step| step.status == "running") {
+    if has_running || has_ready {
         return ("running", None);
+    }
+    if has_pending {
+        return ("queued", None);
     }
     ("queued", None)
 }
@@ -1507,13 +1529,28 @@ async fn advance_workflow_run(
         Ok(None) => anyhow::bail!("workflow run not found"),
         Err(e) => return Err(e.into()),
     };
-    let definition = match state
-        .db
-        .get_workflow_definition(workspace_name, &run.workflow_id)
-    {
-        Ok(Some(definition)) => definition,
-        Ok(None) => anyhow::bail!("workflow not found"),
-        Err(e) => return Err(e.into()),
+    // Prefer the snapshotted definition from run creation time.
+    // Fall back to the current definition for runs created before snapshots were added.
+    let definition = if let Some(snapshot) = run.definition_snapshot.as_deref() {
+        serde_json::from_str::<WorkflowDefinition>(snapshot)
+            .ok()
+            .or_else(|| {
+                state
+                    .db
+                    .get_workflow_definition(workspace_name, &run.workflow_id)
+                    .ok()
+                    .flatten()
+            })
+    } else {
+        state
+            .db
+            .get_workflow_definition(workspace_name, &run.workflow_id)
+            .ok()
+            .flatten()
+    };
+    let definition = match definition {
+        Some(d) => d,
+        None => anyhow::bail!("workflow not found"),
     };
 
     loop {
@@ -1543,17 +1580,17 @@ async fn advance_workflow_run(
 
         let mut actions = Vec::new();
         for step in &step_runs {
-            if step.status != "pending" {
+            if !matches!(step.status.as_str(), "pending" | "ready") {
                 continue;
             }
             let upstream = upstream_node_ids(&definition, &step.node_id);
-            let ready = upstream.iter().all(|node_id| {
+            let deps_met = upstream.iter().all(|node_id| {
                 step_by_node_id
                     .get(node_id)
                     .map(|upstream_step| upstream_step.status == "done")
                     .unwrap_or(false)
             });
-            if !ready {
+            if !deps_met {
                 continue;
             }
 
@@ -1602,6 +1639,10 @@ async fn advance_workflow_run(
                     let Some(agent_name) = step.agent_name.as_deref() else {
                         anyhow::bail!("workflow step is missing an agent binding");
                     };
+                    // Mark ready before dispatching so UI can see the transition
+                    if step.status == "pending" {
+                        let _ = state.db.mark_workflow_step_run_ready(&step.id);
+                    }
                     let thread_id = format!("wft-{}", &uuid::Uuid::new_v4().to_string()[..8]);
                     if let Err(e) = state
                         .db
@@ -1702,6 +1743,7 @@ async fn handle_workflow_thread_message(
             ) {
                 return Err(e.into());
             }
+            advance_workflow_run(state, workspace_name, &step_run.workflow_run_id).await?;
         }
         "question" => {
             if let Err(e) = state
@@ -1994,6 +2036,7 @@ async fn retry_workflow_step_run_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
     Path((workspace_name, run_id, step_run_id)): Path<(String, String, String)>,
+    Query(query): Query<RetryStepQuery>,
 ) -> impl IntoResponse {
     if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
@@ -2021,16 +2064,23 @@ async fn retry_workflow_step_run_handler(
         return error_response(StatusCode::BAD_REQUEST, "cannot retry the start node");
     }
 
-    let descendants = descendant_node_ids(&definition, &step.node_id);
     let step_runs = match state.db.list_workflow_step_runs(&run_id) {
         Ok(steps) => steps,
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
-    let reset_ids = step_runs
-        .iter()
-        .filter(|candidate| descendants.contains(&candidate.node_id))
-        .map(|candidate| candidate.id.clone())
-        .collect::<Vec<_>>();
+
+    let reset_ids = if query.scope == "self" {
+        // Only reset this step
+        vec![step.id.clone()]
+    } else {
+        // Reset this step and all descendants (default)
+        let descendants = descendant_node_ids(&definition, &step.node_id);
+        step_runs
+            .iter()
+            .filter(|candidate| descendants.contains(&candidate.node_id))
+            .map(|candidate| candidate.id.clone())
+            .collect::<Vec<_>>()
+    };
     if let Err(e) = state.db.reset_workflow_step_runs(&run_id, &reset_ids) {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
     }

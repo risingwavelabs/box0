@@ -5,6 +5,7 @@ use crate::server::SharedState;
 
 const SCHEDULER_INTERVAL_SECS: u64 = 60;
 const TEMP_AGENT_MAX_AGE_SECS: i64 = 86400; // 24 hours
+const WORKFLOW_RUN_TIMEOUT_SECS: i64 = 3600; // 1 hour
 
 /// Parse a schedule string and return the interval in seconds.
 /// Supported formats:
@@ -72,6 +73,23 @@ pub async fn run(state: SharedState) {
             Ok(n) if n > 0 => tracing::info!("Cleaned up {} expired temp agents", n),
             Err(e) => tracing::error!("Failed to clean up temp agents: {}", e),
             _ => {}
+        }
+
+        // Time out stale workflow runs
+        match state.db.get_stale_workflow_runs(WORKFLOW_RUN_TIMEOUT_SECS) {
+            Ok(runs) => {
+                for run in runs {
+                    tracing::warn!(
+                        run_id = run.id,
+                        workspace = run.workspace_name,
+                        "Scheduler: timing out stale workflow run"
+                    );
+                    if let Err(e) = state.db.timeout_workflow_run(&run.workspace_name, &run.id) {
+                        tracing::error!("Failed to timeout workflow run {}: {}", run.id, e);
+                    }
+                }
+            }
+            Err(e) => tracing::error!("Failed to check stale workflow runs: {}", e),
         }
 
         let jobs = match state.db.get_all_enabled_cron_jobs() {

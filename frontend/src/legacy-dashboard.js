@@ -324,6 +324,19 @@ export function mountLegacyDashboard(root) {
     return `<span class="status-dot ${esc(status)}"></span>${esc(status)}`
   }
 
+  function nodeStatusIcon(status) {
+    const icons = {
+      pending: '<span class="node-status-icon pending" title="Pending">&#9679;</span>',
+      ready: '<span class="node-status-icon ready" title="Ready">&#9679;</span>',
+      running: '<span class="node-status-icon running" title="Running">&#9881;</span>',
+      done: '<span class="node-status-icon done" title="Done">&#10003;</span>',
+      failed: '<span class="node-status-icon failed" title="Failed">&#10007;</span>',
+      waiting_for_input: '<span class="node-status-icon waiting" title="Waiting for input">&#9208;</span>',
+      skipped: '<span class="node-status-icon skipped" title="Skipped">&#8211;</span>',
+    }
+    return icons[status] || ''
+  }
+
   function timeAgo(dateStr) {
     if (!dateStr) return 'never'
     const date = new Date(dateStr)
@@ -374,7 +387,12 @@ export function mountLegacyDashboard(root) {
     const uniquePositions = new Set(
       nodes.map((node) => `${Math.round(node.position_x || 0)}:${Math.round(node.position_y || 0)}`),
     )
-    const useSavedPositions = uniquePositions.size > 1
+    // Use saved positions only when every node has a unique non-default position.
+    // If any node sits at the default (0,0), fall through to topo-sort layout.
+    const hasDefaultPosition = nodes.some(
+      (node) => Math.round(node.position_x || 0) === 0 && Math.round(node.position_y || 0) === 0,
+    )
+    const useSavedPositions = uniquePositions.size > 1 && !hasDefaultPosition
 
     if (useSavedPositions) {
       let minX = Infinity
@@ -447,6 +465,7 @@ export function mountLegacyDashboard(root) {
       columns[col].push(node)
     })
 
+    // Initial sort by kind then title
     Object.values(columns).forEach((column) => {
       column.sort((a, b) => {
         const kindOrder = { start: 0, agent: 1, human_input: 2, end: 3 }
@@ -455,6 +474,52 @@ export function mountLegacyDashboard(root) {
         return (a.title || '').localeCompare(b.title || '')
       })
     })
+
+    // Barycenter heuristic: reorder columns to minimize edge crossings.
+    // Build a row-index lookup and iterate forward then backward several times.
+    const colKeys = Object.keys(columns).map(Number).sort((a, b) => a - b)
+
+    function buildRowIndex() {
+      const idx = {}
+      colKeys.forEach((col) => {
+        columns[col].forEach((node, row) => {
+          idx[node.id] = row
+        })
+      })
+      return idx
+    }
+
+    for (let iter = 0; iter < 4; iter++) {
+      // Forward pass: order each column by average row of upstream nodes
+      let rowIdx = buildRowIndex()
+      for (let ci = 1; ci < colKeys.length; ci++) {
+        const col = colKeys[ci]
+        columns[col].forEach((node) => {
+          const ups = incoming[node.id] || []
+          if (ups.length > 0) {
+            node._bary = ups.reduce((sum, id) => sum + (rowIdx[id] || 0), 0) / ups.length
+          } else {
+            node._bary = rowIdx[node.id] || 0
+          }
+        })
+        columns[col].sort((a, b) => a._bary - b._bary)
+      }
+
+      // Backward pass: order each column by average row of downstream nodes
+      rowIdx = buildRowIndex()
+      for (let ci = colKeys.length - 2; ci >= 0; ci--) {
+        const col = colKeys[ci]
+        columns[col].forEach((node) => {
+          const downs = outgoing[node.id] || []
+          if (downs.length > 0) {
+            node._bary = downs.reduce((sum, id) => sum + (rowIdx[id] || 0), 0) / downs.length
+          } else {
+            node._bary = rowIdx[node.id] || 0
+          }
+        })
+        columns[col].sort((a, b) => a._bary - b._bary)
+      }
+    }
 
     const positions = {}
     let maxRight = 0
@@ -478,13 +543,28 @@ export function mountLegacyDashboard(root) {
     }
   }
 
-  function workflowEdgePath(from, to, nodeWidth, nodeHeight) {
-    const startX = from.x + nodeWidth
-    const startY = from.y + nodeHeight / 2
-    const endX = to.x
-    const endY = to.y + nodeHeight / 2
-    const curve = Math.max(40, Math.abs(endX - startX) * 0.35)
-    return `M ${startX} ${startY} C ${startX + curve} ${startY}, ${endX - curve} ${endY}, ${endX} ${endY}`
+  function workflowEdgePath(from, to, nodeWidth, nodeHeight, edgeIndex, edgeTotal) {
+    // Offset to spread parallel edges apart
+    const spread = edgeTotal > 1 ? (edgeIndex - (edgeTotal - 1) / 2) * 12 : 0
+
+    if (to.x > from.x + nodeWidth / 2) {
+      // Normal left-to-right: exit right side, enter left side
+      const startX = from.x + nodeWidth
+      const startY = from.y + nodeHeight / 2 + spread
+      const endX = to.x
+      const endY = to.y + nodeHeight / 2 + spread
+      const dx = Math.abs(endX - startX)
+      const curve = Math.max(40, dx * 0.35)
+      return `M ${startX} ${startY} C ${startX + curve} ${startY}, ${endX - curve} ${endY}, ${endX} ${endY}`
+    }
+
+    // Backwards or same-column: route around via bottom
+    const startX = from.x + nodeWidth / 2 + spread
+    const startY = from.y + nodeHeight
+    const endX = to.x + nodeWidth / 2 + spread
+    const endY = to.y
+    const drop = 30 + Math.abs(spread)
+    return `M ${startX} ${startY} C ${startX} ${startY + drop}, ${endX} ${endY - drop}, ${endX} ${endY}`
   }
 
   App.webAgent = {
@@ -1554,6 +1634,7 @@ export function mountLegacyDashboard(root) {
       if (!App.currentWorkspace) return
       App.poll.stopAll()
       App.workflowDetail._workflowId = workflowId
+      App.workflowDetail._definition = null
       App.workflowDetail._selectedRunId = null
       App.workflowDetail._selectedRunDetail = null
       App.workflowDetail._threadMessages = {}
@@ -1569,13 +1650,36 @@ export function mountLegacyDashboard(root) {
       if (!App.currentWorkspace || !App.workflowDetail._workflowId) return
       if (showSpinner) showLoading()
 
-      Promise.all([
-        App.api.get(App.workspacePath(`/workflows/${encodeURIComponent(App.workflowDetail._workflowId)}`)),
+      const isInitialLoad = !App.workflowDetail._definition
+
+      const promises = [
         App.api.get(App.workspacePath('/agents')),
         App.api.get(App.workspacePath(`/workflow-runs?workflow_id=${encodeURIComponent(App.workflowDetail._workflowId)}`)),
-      ])
-        .then(([definition, agentsData, runsData]) => {
-          App.workflowDetail._definition = definition
+      ]
+      // Only fetch the definition on initial load or explicit refresh.
+      // During polling, keep the local (potentially edited) definition.
+      if (isInitialLoad) {
+        promises.push(
+          App.api.get(App.workspacePath(`/workflows/${encodeURIComponent(App.workflowDetail._workflowId)}`)),
+        )
+      }
+
+      const expectedId = App.workflowDetail._workflowId
+      const isStillOnExpectedWorkflow = () => {
+        const currentHash = location.hash || ''
+        return (
+          App.workflowDetail._workflowId === expectedId
+          && currentHash.startsWith(`#/workflows/${encodeURIComponent(expectedId)}`)
+        )
+      }
+      Promise.all(promises)
+        .then(([agentsData, runsData, definition]) => {
+          // Guard: if user navigated away, discard this stale response
+          if (!isStillOnExpectedWorkflow()) return
+
+          if (definition) {
+            App.workflowDetail._definition = definition
+          }
           App.workflowDetail._agents = agentsData.agents || []
           App.workflowDetail._runs = runsData.runs || []
 
@@ -1588,6 +1692,7 @@ export function mountLegacyDashboard(root) {
             return App.api
               .get(App.workspacePath(`/workflow-runs/${encodeURIComponent(selectedRunId)}`))
               .then((runDetail) => {
+                if (!isStillOnExpectedWorkflow()) return
                 App.workflowDetail._selectedRunDetail = runDetail
                 App.workflowDetail.renderEditor()
                 App.workflowDetail.ensureRunPolling()
@@ -1617,7 +1722,29 @@ export function mountLegacyDashboard(root) {
       }, 3000)
     },
 
+    syncFormState() {
+      const definition = App.workflowDetail._definition
+      if (!definition) return
+      const nameEl = document.getElementById('wf-name')
+      if (nameEl) definition.workflow.name = nameEl.value.trim()
+      const descEl = document.getElementById('wf-description')
+      if (descEl) definition.workflow.description = descEl.value.trim()
+      const statusEl = document.getElementById('wf-status')
+      if (statusEl) definition.workflow.status = statusEl.value
+      ;(definition.nodes || []).forEach((node) => {
+        const kindEl = document.getElementById(`wf-node-kind-${node.id}`)
+        if (kindEl) node.kind = kindEl.value
+        const titleEl = document.getElementById(`wf-node-title-${node.id}`)
+        if (titleEl) node.title = titleEl.value.trim()
+        const promptEl = document.getElementById(`wf-node-prompt-${node.id}`)
+        if (promptEl) node.prompt = promptEl.value.trim()
+        const agentEl = document.getElementById(`wf-node-agent-${node.id}`)
+        if (agentEl && node.kind === 'agent') node.agent_name = agentEl.value
+      })
+    },
+
     renderEditor() {
+      App.workflowDetail.syncFormState()
       const definition = App.workflowDetail._definition
       if (!definition) return
 
@@ -1670,17 +1797,48 @@ export function mountLegacyDashboard(root) {
         html += `<div class="workflow-canvas" style="height:${preview.height}px">`
         html += `<svg class="workflow-canvas-svg" viewBox="0 0 ${preview.width} ${preview.height}" preserveAspectRatio="xMinYMin meet">`
         html += '<defs><marker id="workflow-arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"></path></marker></defs>'
+        // Group edges by source and by target, sorted by counterpart Y position
+        const edgesBySource = {}
+        const edgesByTarget = {}
+        edges.forEach((edge) => {
+          if (!edgesBySource[edge.source_node_id]) edgesBySource[edge.source_node_id] = []
+          edgesBySource[edge.source_node_id].push(edge)
+          if (!edgesByTarget[edge.target_node_id]) edgesByTarget[edge.target_node_id] = []
+          edgesByTarget[edge.target_node_id].push(edge)
+        })
+        // Sort fan-out edges by target Y so top edge goes to topmost target
+        Object.values(edgesBySource).forEach((group) => {
+          group.sort((a, b) => (preview.positions[a.target_node_id]?.y || 0) - (preview.positions[b.target_node_id]?.y || 0))
+        })
+        // Sort fan-in edges by source Y so top edge comes from topmost source
+        Object.values(edgesByTarget).forEach((group) => {
+          group.sort((a, b) => (preview.positions[a.source_node_id]?.y || 0) - (preview.positions[b.source_node_id]?.y || 0))
+        })
         edges.forEach((edge) => {
           const from = preview.positions[edge.source_node_id]
           const to = preview.positions[edge.target_node_id]
           if (!from || !to) return
-          html += `<path d="${workflowEdgePath(from, to, preview.nodeWidth, preview.nodeHeight)}" class="workflow-edge-line" marker-end="url(#workflow-arrow)"></path>`
+          const outSiblings = edgesBySource[edge.source_node_id] || [edge]
+          const outIdx = outSiblings.indexOf(edge)
+          const inSiblings = edgesByTarget[edge.target_node_id] || [edge]
+          const inIdx = inSiblings.indexOf(edge)
+          html += `<path d="${workflowEdgePath(from, to, preview.nodeWidth, preview.nodeHeight, outIdx, outSiblings.length, inIdx, inSiblings.length)}" class="workflow-edge-line" marker-end="url(#workflow-arrow)"></path>`
         })
         html += '</svg>'
+        // Build node status map from selected run
+        const nodeStatusMap = {}
+        if (selectedRun && selectedRun.step_runs) {
+          selectedRun.step_runs.forEach((step) => { nodeStatusMap[step.node_id] = step.status })
+        }
         nodes.forEach((node) => {
           const pos = preview.positions[node.id]
           if (!pos) return
-          html += `<button type="button" class="workflow-node-card workflow-node-card-${escAttr(node.kind)}" style="left:${pos.x}px;top:${pos.y}px;width:${preview.nodeWidth}px" onclick="App.workflowDetail.focusNode('${escAttr(node.id)}')">`
+          const nodeStatus = nodeStatusMap[node.id]
+          const statusCls = nodeStatus === 'failed' ? ' workflow-node-card-status-failed' : nodeStatus === 'running' ? ' workflow-node-card-status-running' : ''
+          html += `<button type="button" class="workflow-node-card workflow-node-card-${escAttr(node.kind)}${statusCls}" style="left:${pos.x}px;top:${pos.y}px;width:${preview.nodeWidth}px" onclick="App.workflowDetail.focusNode('${escAttr(node.id)}')">`
+          if (nodeStatus) {
+            html += nodeStatusIcon(nodeStatus)
+          }
           html += `<div class="workflow-node-card-kind">${esc(node.kind.replace('_', ' '))}</div>`
           html += `<div class="workflow-node-card-title">${esc(node.title || defaultNodeTitle(node.kind))}</div>`
           if (node.kind === 'agent' && node.agent_name) {
@@ -1806,10 +1964,11 @@ export function mountLegacyDashboard(root) {
         if (!stepRuns.length) {
           html += '<p style="color:var(--text-secondary)">No step runs.</p>'
         } else {
-          stepRuns.forEach((step) => {
+          const lastDoneIdx = stepRuns.reduce((acc, step, i) => step.status === 'done' && step.output ? i : acc, -1)
+          stepRuns.forEach((step, stepIdx) => {
             html += '<div class="workflow-step-run">'
             html += '<div class="workflow-step-run-head">'
-            html += `<div><strong>${esc(step.node_title)}</strong><div style="font-size:12px;color:var(--text-secondary)">${esc(step.node_kind)}${step.agent_name ? ` · ${esc(step.agent_name)}` : ''}</div></div>`
+            html += `<div><strong>${esc(step.node_title)}</strong><div style="font-size:12px;color:var(--text-secondary)">${step.node_kind === 'start' || step.node_kind === 'end' ? '' : esc(step.node_kind)}${step.agent_name ? ` · ${esc(step.agent_name)}` : ''}</div></div>`
             html += '<div>'
             html += `${statusDot(step.status)}`
             if (['done', 'failed'].includes(step.status)) {
@@ -1824,10 +1983,11 @@ export function mountLegacyDashboard(root) {
             }
             html += '</div></div>'
             if (step.input) {
-              html += `<div class="workflow-step-run-block"><div class="workflow-step-run-label">Input</div><div class="instructions-block">${esc(step.input)}</div></div>`
+              html += `<div class="workflow-step-run-block"><details class="workflow-output-details"><summary class="workflow-step-run-label">Input <span class="toggle-hint">(click to expand)</span></summary><div class="instructions-block">${esc(step.input)}</div></details></div>`
             }
             if (step.output) {
-              html += `<div class="workflow-step-run-block"><details class="workflow-output-details"><summary class="workflow-step-run-label">Output <span class="toggle-hint">(click to expand)</span></summary><div class="instructions-block">${esc(step.output)}</div></details></div>`
+              const openAttr = stepIdx === lastDoneIdx ? ' open' : ''
+              html += `<div class="workflow-step-run-block"><details class="workflow-output-details"${openAttr}><summary class="workflow-step-run-label">Output <span class="toggle-hint">(click to expand)</span></summary><div class="instructions-block">${esc(step.output)}</div></details></div>`
             }
             if (step.error) {
               html += `<div class="workflow-step-run-block"><div class="workflow-step-run-label">Error</div><div class="instructions-block">${esc(step.error)}</div></div>`
