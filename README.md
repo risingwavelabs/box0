@@ -38,6 +38,12 @@ Read https://box0.dev/skill.md and follow the instructions to install and config
 Install:
 
 ```bash
+curl -sSL https://box0.dev/install.sh | sh
+```
+
+Or via npm:
+
+```bash
 npm install -g @box0/cli@latest
 ```
 
