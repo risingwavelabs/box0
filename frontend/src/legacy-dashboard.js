@@ -375,6 +375,16 @@ export function mountLegacyDashboard(root) {
     return 'Step'
   }
 
+  function withEndItemsLast(items, getKind) {
+    const nonEndItems = []
+    const endItems = []
+    items.forEach((item) => {
+      if (getKind(item) === 'end') endItems.push(item)
+      else nonEndItems.push(item)
+    })
+    return nonEndItems.concat(endItems)
+  }
+
   function workflowPreviewLayout(definition) {
     const nodes = definition.nodes || []
     const edges = definition.edges || []
@@ -1750,6 +1760,7 @@ export function mountLegacyDashboard(root) {
 
       const workflow = definition.workflow
       const nodes = definition.nodes || []
+      const editorNodes = withEndItemsLast(nodes, (node) => node.kind)
       const edges = definition.edges || []
       const runs = App.workflowDetail._runs || []
       const selectedRun = App.workflowDetail._selectedRunDetail
@@ -1860,7 +1871,7 @@ export function mountLegacyDashboard(root) {
       if (nodes.length === 0) {
         html += '<p style="color:var(--text-secondary)">No nodes.</p>'
       } else {
-        nodes.forEach((node) => {
+        editorNodes.forEach((node) => {
           html += `<div class="workflow-node-editor">`
           html += '<div class="workflow-node-head">'
           html += `<strong>${esc(node.title || defaultNodeTitle(node.kind))}</strong>`
@@ -1950,7 +1961,7 @@ export function mountLegacyDashboard(root) {
       html += '</div></div>'
 
       if (selectedRun && selectedRun.run) {
-        const stepRuns = selectedRun.step_runs || []
+        const stepRuns = withEndItemsLast(selectedRun.step_runs || [], (step) => step.node_kind)
         html += '<div class="card"><div class="card-header">Run Detail</div><div class="card-body">'
         html += '<dl class="detail-grid" style="margin-bottom:20px">'
         html += `<dt>Run ID</dt><dd>${esc(selectedRun.run.id)}</dd>`
