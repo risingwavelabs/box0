@@ -191,14 +191,18 @@ async fn send_inbox_message_handler(
         return e;
     }
 
-    // Verify agent exists
-    match state.db.get_agent(&workspace_name, &agent_name) {
-        Ok(Some(_)) => {}
-        Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
-
     let valid_types = ["request", "question", "answer", "done", "failed", "message", "started"];
+
+    // Only verify agent exists for new requests. Response messages (done, failed,
+    // started, answer) target the lead agent which is not in the agents table.
+    let response_types = ["done", "failed", "started", "answer"];
+    if !response_types.contains(&req.msg_type.as_str()) {
+        match state.db.get_agent(&workspace_name, &agent_name) {
+            Ok(Some(_)) => {}
+            Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
+            Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+        }
+    }
     if !valid_types.contains(&req.msg_type.as_str()) {
         return error_response(StatusCode::BAD_REQUEST, "invalid message type");
     }
