@@ -147,13 +147,9 @@ async fn test_agent_workspace_isolation() {
     let alice_client = BhClient::with_api_key(&url, &alice.key);
     let bob_client = BhClient::with_api_key(&url, &bob.key);
 
-    // Each user registers their own machine
-    alice_client.register_machine("alice-mac").await.unwrap();
-    bob_client.register_machine("bob-mac").await.unwrap();
-
-    // Alice creates an agent in her personal workspace on her machine
+    // Alice creates an agent in her personal workspace
     alice_client
-        .register_agent("alice", "alice-agent", "", "Do stuff.", "alice-mac", "auto", "background", None, None)
+        .register_agent("alice", "alice-agent", "", "Do stuff.", "local", "auto", "background", None, None)
         .await
         .unwrap();
 
@@ -161,9 +157,9 @@ async fn test_agent_workspace_isolation() {
     let result = bob_client.list_agents("alice").await;
     assert!(result.is_err());
 
-    // Bob creates his own agent on his machine
+    // Bob creates his own agent
     bob_client
-        .register_agent("bob", "bob-agent", "", "Do stuff.", "bob-mac", "auto", "background", None, None)
+        .register_agent("bob", "bob-agent", "", "Do stuff.", "local", "auto", "background", None, None)
         .await
         .unwrap();
 
@@ -184,10 +180,9 @@ async fn test_agent_ownership_permission() {
 
     let alice_client = BhClient::with_api_key(&url, &alice.key);
 
-    // Alice registers her machine and creates an agent in the shared workspace
-    alice_client.register_machine("alice-mac").await.unwrap();
+    // Alice creates an agent in the shared workspace
     alice_client
-        .register_agent("team", "alice-agent", "", "Do stuff.", "alice-mac", "auto", "background", None, None)
+        .register_agent("team", "alice-agent", "", "Do stuff.", "local", "auto", "background", None, None)
         .await
         .unwrap();
 
