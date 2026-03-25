@@ -45,9 +45,11 @@ export PATH="$PWD/target/release:$PATH"
 b0 status
 ```
 
-If this shows connection info, skip to Step 5.
+If this shows "Status: connected", skip to Step 5.
 
-### Step 4: Start the server
+### Step 4: Connect to a server
+
+**Option A: Start a local server (self-hosted)**
 
 Run in a separate terminal or background process:
 
@@ -57,7 +59,35 @@ b0 server
 
 On first start, Box0 creates an admin account and auto-configures `~/.b0/config.toml`.
 
-### Step 5: Install the skill
+**Option B: Connect to a remote server (cloud/team)**
+
+If the user already has a remote Box0 server, log in instead of starting a local one:
+
+```bash
+b0 login <server-url> --key <api-key>
+```
+
+The user must provide the server URL and API key. After login, continue to Step 5.
+
+### Step 5: Register this machine (remote servers only)
+
+If `b0 status` shows a remote server (not `localhost` or `127.0.0.1`), check if this machine is registered:
+
+```bash
+b0 machine ls
+```
+
+If no machines are listed, or if agent creation later fails with "no local machine", register this machine. Read `server_url` and `api_key` from `~/.b0/config.toml`, then run:
+
+```bash
+b0 machine join <server-url> --name <hostname> --key <api-key>
+```
+
+Replace `<server-url>` with the server URL, `<hostname>` with this machine's hostname, and `<api-key>` with the API key from the config file.
+
+If the server is local (localhost or 127.0.0.1), skip this step - the local machine is registered automatically.
+
+### Step 6: Install the skill
 
 ```bash
 which claude && b0 skill install claude-code
@@ -66,7 +96,7 @@ which codex && b0 skill install codex
 
 On Windows, use `where` instead of `which`.
 
-### Step 6: Verify
+### Step 7: Verify
 
 ```bash
 b0 agent ls
@@ -186,4 +216,5 @@ The agent remembers all previous turns.
 | `b0 status` shows no connection | Start the server with `b0 server` |
 | `b0 delegate` hangs | Check that the daemon is running (it starts with the server) |
 | Agent returns empty result | Check agent instructions with `b0 agent info <name>` |
+| "no local machine" error | Run `b0 machine join <url> --name <hostname> --key <key>` to register this machine |
 | Timeout errors | Default is 300s. Check if the task needs more time. |

@@ -21,6 +21,8 @@ enum Command {
         port: Option<u16>,
         #[arg(long)]
         db: Option<String>,
+        #[arg(long)]
+        no_local: bool,
     },
     /// Connect to a Box0 server
     Login {
@@ -328,7 +330,7 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Server { config: config_path, host, port, db } => {
+        Command::Server { config: config_path, host, port, db, no_local } => {
             let mut cfg = config::ServerConfig::load(config_path.as_deref());
             if let Some(h) = host { cfg.host = h; }
             if let Some(p) = port { cfg.port = p; }
@@ -342,7 +344,7 @@ async fn main() {
                 )
                 .init();
 
-            server::run(cfg).await;
+            server::run(cfg, no_local).await;
         }
 
         Command::Login { server_url, key } => cmd_login(&server_url, key.as_deref()).await,
