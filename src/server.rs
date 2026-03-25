@@ -250,6 +250,40 @@ fn require_workspace_member(
     }
 }
 
+fn internal_error<E: std::fmt::Display>(error: E) -> axum::response::Response {
+    error_response(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
+}
+
+pub(crate) async fn process_inbox_message_side_effects(
+    state: &AppState,
+    workspace_name: &str,
+    thread_id: &str,
+    msg_type: &str,
+    content: Option<&serde_json::Value>,
+) -> anyhow::Result<()> {
+    // Auto-update task status based on message type.
+    if msg_type == "done" || msg_type == "failed" {
+        if let Ok(Some(task)) = state.db.get_task_by_thread(workspace_name, thread_id) {
+            let status = if msg_type == "done" { "done" } else { "failed" };
+            let result = content.and_then(|v| v.as_str());
+            state
+                .db
+                .update_task_status(workspace_name, &task.id, status, result)?;
+        }
+    }
+    if msg_type == "question" {
+        if let Ok(Some(task)) = state.db.get_task_by_thread(workspace_name, thread_id) {
+            state
+                .db
+                .update_task_status(workspace_name, &task.id, "needs_input", None)?;
+        }
+    }
+
+    handle_workflow_thread_message(state, workspace_name, thread_id, msg_type, content).await?;
+    state.inbox_notify.notify_waiters();
+    Ok(())
+}
+
 // --- Handlers: Health ---
 
 async fn health_handler() -> Json<serde_json::Value> {
@@ -303,32 +337,7 @@ async fn send_inbox_message_handler(
         req.content.as_ref(),
     ) {
         Ok(msg) => {
-            // Auto-update task status based on message type
-            if req.msg_type == "done" || req.msg_type == "failed" {
-                if let Ok(Some(task)) = state.db.get_task_by_thread(&workspace_name, &req.thread_id)
-                {
-                    let status = if req.msg_type == "done" {
-                        "done"
-                    } else {
-                        "failed"
-                    };
-                    let result = req.content.as_ref().and_then(|v| v.as_str());
-                    let _ = state
-                        .db
-                        .update_task_status(&workspace_name, &task.id, status, result);
-                }
-            }
-            if req.msg_type == "question" {
-                if let Ok(Some(task)) = state.db.get_task_by_thread(&workspace_name, &req.thread_id)
-                {
-                    let _ =
-                        state
-                            .db
-                            .update_task_status(&workspace_name, &task.id, "needs_input", None);
-                }
-            }
-
-            if let Err(err) = handle_workflow_thread_message(
+            if let Err(err) = process_inbox_message_side_effects(
                 &state,
                 &workspace_name,
                 &req.thread_id,
@@ -337,10 +346,8 @@ async fn send_inbox_message_handler(
             )
             .await
             {
-                return err;
+                return internal_error(err);
             }
-
-            state.inbox_notify.notify_waiters();
             (
                 StatusCode::CREATED,
                 Json(serde_json::json!({"message_id": msg.id, "created_at": msg.created_at})),
@@ -1494,45 +1501,25 @@ async fn advance_workflow_run(
     state: &AppState,
     workspace_name: &str,
     run_id: &str,
-) -> Result<(), axum::response::Response> {
+) -> anyhow::Result<()> {
     let run = match state.db.get_workflow_run(workspace_name, run_id) {
         Ok(Some(run)) => run,
-        Ok(None) => {
-            return Err(error_response(
-                StatusCode::NOT_FOUND,
-                "workflow run not found",
-            ));
-        }
-        Err(e) => {
-            return Err(error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &e.to_string(),
-            ));
-        }
+        Ok(None) => anyhow::bail!("workflow run not found"),
+        Err(e) => return Err(e.into()),
     };
     let definition = match state
         .db
         .get_workflow_definition(workspace_name, &run.workflow_id)
     {
         Ok(Some(definition)) => definition,
-        Ok(None) => return Err(error_response(StatusCode::NOT_FOUND, "workflow not found")),
-        Err(e) => {
-            return Err(error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &e.to_string(),
-            ));
-        }
+        Ok(None) => anyhow::bail!("workflow not found"),
+        Err(e) => return Err(e.into()),
     };
 
     loop {
         let step_runs = match state.db.list_workflow_step_runs(run_id) {
             Ok(steps) => steps,
-            Err(e) => {
-                return Err(error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &e.to_string(),
-                ));
-            }
+            Err(e) => return Err(e.into()),
         };
         let step_by_node_id: HashMap<String, WorkflowStepRun> = step_runs
             .iter()
@@ -1613,20 +1600,14 @@ async fn advance_workflow_run(
             match action {
                 Action::Dispatch { step, input } => {
                     let Some(agent_name) = step.agent_name.as_deref() else {
-                        return Err(error_response(
-                            StatusCode::BAD_REQUEST,
-                            "workflow step is missing an agent binding",
-                        ));
+                        anyhow::bail!("workflow step is missing an agent binding");
                     };
                     let thread_id = format!("wft-{}", &uuid::Uuid::new_v4().to_string()[..8]);
                     if let Err(e) = state
                         .db
                         .dispatch_workflow_step_run(run_id, &step.id, &thread_id, &input)
                     {
-                        return Err(error_response(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            &e.to_string(),
-                        ));
+                        return Err(e.into());
                     }
                     if let Err(e) = state.db.send_inbox_message(
                         workspace_name,
@@ -1636,18 +1617,12 @@ async fn advance_workflow_run(
                         "request",
                         Some(&serde_json::json!(input)),
                     ) {
-                        return Err(error_response(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            &e.to_string(),
-                        ));
+                        return Err(e.into());
                     }
                 }
                 Action::WaitForInput { step } => {
                     if let Err(e) = state.db.set_workflow_step_run_waiting_for_input(&step.id) {
-                        return Err(error_response(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            &e.to_string(),
-                        ));
+                        return Err(e.into());
                     }
                 }
                 Action::Complete { step, output } => {
@@ -1660,10 +1635,7 @@ async fn advance_workflow_run(
                         .db
                         .complete_workflow_step_run(&step.id, "done", output_ref, None)
                     {
-                        return Err(error_response(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            &e.to_string(),
-                        ));
+                        return Err(e.into());
                     }
                 }
             }
@@ -1672,12 +1644,7 @@ async fn advance_workflow_run(
 
     let step_runs = match state.db.list_workflow_step_runs(run_id) {
         Ok(steps) => steps,
-        Err(e) => {
-            return Err(error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &e.to_string(),
-            ));
-        }
+        Err(e) => return Err(e.into()),
     };
     let (status, error) = compute_workflow_run_state(&step_runs);
     if let Err(e) =
@@ -1685,10 +1652,7 @@ async fn advance_workflow_run(
             .db
             .update_workflow_run_status(workspace_name, run_id, status, error.as_deref())
     {
-        return Err(error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &e.to_string(),
-        ));
+        return Err(e.into());
     }
     state.inbox_notify.notify_waiters();
     Ok(())
@@ -1700,18 +1664,13 @@ async fn handle_workflow_thread_message(
     thread_id: &str,
     msg_type: &str,
     content: Option<&serde_json::Value>,
-) -> Result<(), axum::response::Response> {
+) -> anyhow::Result<()> {
     let Some(step_run) = (match state
         .db
         .get_workflow_step_run_by_thread(workspace_name, thread_id)
     {
         Ok(value) => value,
-        Err(e) => {
-            return Err(error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &e.to_string(),
-            ));
-        }
+        Err(e) => return Err(e.into()),
     }) else {
         return Ok(());
     };
@@ -1720,10 +1679,7 @@ async fn handle_workflow_thread_message(
     match msg_type {
         "started" => {
             if let Err(e) = state.db.mark_workflow_step_run_started(&step_run.id) {
-                return Err(error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &e.to_string(),
-                ));
+                return Err(e.into());
             }
         }
         "done" => {
@@ -1733,10 +1689,7 @@ async fn handle_workflow_thread_message(
                 output_text.as_deref(),
                 None,
             ) {
-                return Err(error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &e.to_string(),
-                ));
+                return Err(e.into());
             }
             advance_workflow_run(state, workspace_name, &step_run.workflow_run_id).await?;
         }
@@ -1747,10 +1700,7 @@ async fn handle_workflow_thread_message(
                 output_text.as_deref(),
                 output_text.as_deref(),
             ) {
-                return Err(error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &e.to_string(),
-                ));
+                return Err(e.into());
             }
         }
         "question" => {
@@ -1758,10 +1708,7 @@ async fn handle_workflow_thread_message(
                 .db
                 .set_workflow_step_run_waiting_for_input(&step_run.id)
             {
-                return Err(error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &e.to_string(),
-                ));
+                return Err(e.into());
             }
         }
         _ => {}
@@ -1769,12 +1716,7 @@ async fn handle_workflow_thread_message(
 
     let step_runs = match state.db.list_workflow_step_runs(&step_run.workflow_run_id) {
         Ok(steps) => steps,
-        Err(e) => {
-            return Err(error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &e.to_string(),
-            ));
-        }
+        Err(e) => return Err(e.into()),
     };
     let (status, error) = compute_workflow_run_state(&step_runs);
     if let Err(e) = state.db.update_workflow_run_status(
@@ -1783,10 +1725,7 @@ async fn handle_workflow_thread_message(
         status,
         error.as_deref(),
     ) {
-        return Err(error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &e.to_string(),
-        ));
+        return Err(e.into());
     }
     Ok(())
 }
@@ -2029,7 +1968,7 @@ async fn create_workflow_run_handler(
     };
 
     if let Err(err) = advance_workflow_run(&state, &workspace_name, &run.id).await {
-        return err;
+        return internal_error(err);
     }
     match workflow_run_response(&state, &workspace_name, &run.id) {
         Ok(payload) => (StatusCode::CREATED, Json(payload)).into_response(),
@@ -2102,7 +2041,7 @@ async fn retry_workflow_step_run_handler(
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
     }
     if let Err(err) = advance_workflow_run(&state, &workspace_name, &run_id).await {
-        return err;
+        return internal_error(err);
     }
     match workflow_run_response(&state, &workspace_name, &run_id) {
         Ok(payload) => (StatusCode::OK, Json(payload)).into_response(),
@@ -2143,7 +2082,7 @@ async fn workflow_step_input_handler(
                 return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
             }
             if let Err(err) = advance_workflow_run(&state, &workspace_name, &run_id).await {
-                return err;
+                return internal_error(err);
             }
         }
         "agent" => {

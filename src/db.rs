@@ -9,6 +9,8 @@ pub struct Database {
     conn: Mutex<Connection>,
 }
 
+pub const DEFAULT_AGENT_TIMEOUT_SECS: i64 = 1800;
+
 // --- Models ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,7 +101,7 @@ fn default_kind() -> String {
 }
 
 fn default_timeout() -> i64 {
-    300
+    DEFAULT_AGENT_TIMEOUT_SECS
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -314,6 +316,7 @@ impl Database {
                 status TEXT NOT NULL DEFAULT 'active',
                 registered_by TEXT NOT NULL DEFAULT '',
                 kind TEXT NOT NULL DEFAULT 'normal',
+                timeout INTEGER NOT NULL DEFAULT 1800,
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 PRIMARY KEY (workspace_name, name)
             );
@@ -421,7 +424,7 @@ impl Database {
 
         // Migrations for existing databases
         let _ = conn.execute(
-            "ALTER TABLE agents ADD COLUMN timeout INTEGER NOT NULL DEFAULT 300",
+            "ALTER TABLE agents ADD COLUMN timeout INTEGER NOT NULL DEFAULT 1800",
             [],
         );
         let _ = conn.execute(
@@ -430,6 +433,12 @@ impl Database {
         );
         // Migrate old temp column to kind
         let _ = conn.execute("UPDATE agents SET kind = 'temp' WHERE temp = 1", []);
+        // Existing databases were created before timeout was configurable and all
+        // agents inherited the old 300s default. Raise them to the new default.
+        let _ = conn.execute(
+            "UPDATE agents SET timeout = ?1 WHERE timeout = 300",
+            params![DEFAULT_AGENT_TIMEOUT_SECS],
+        );
 
         Ok(())
     }
@@ -838,8 +847,18 @@ impl Database {
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
-            "INSERT INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind],
+            "INSERT INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind, timeout) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                workspace_name,
+                name,
+                description,
+                instructions,
+                machine_id,
+                runtime,
+                registered_by,
+                kind,
+                DEFAULT_AGENT_TIMEOUT_SECS
+            ],
         )?;
 
         let ts: String = conn.query_row(
@@ -857,7 +876,7 @@ impl Database {
             status: "active".to_string(),
             registered_by: registered_by.to_string(),
             kind: kind.to_string(),
-            timeout: 300,
+            timeout: DEFAULT_AGENT_TIMEOUT_SECS,
             created_at: Self::parse_ts(&ts),
         })
     }

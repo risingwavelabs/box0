@@ -1827,7 +1827,7 @@ export function mountLegacyDashboard(root) {
               html += `<div class="workflow-step-run-block"><div class="workflow-step-run-label">Input</div><div class="instructions-block">${esc(step.input)}</div></div>`
             }
             if (step.output) {
-              html += `<div class="workflow-step-run-block"><div class="workflow-step-run-label">Output</div><div class="instructions-block">${esc(step.output)}</div></div>`
+              html += `<div class="workflow-step-run-block"><details class="workflow-output-details"><summary class="workflow-step-run-label">Output <span class="toggle-hint">(click to expand)</span></summary><div class="instructions-block">${esc(step.output)}</div></details></div>`
             }
             if (step.error) {
               html += `<div class="workflow-step-run-block"><div class="workflow-step-run-label">Error</div><div class="instructions-block">${esc(step.error)}</div></div>`

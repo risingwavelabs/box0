@@ -97,16 +97,19 @@ body {
 
 .app-layout {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .sidebar {
   width: 220px;
+  height: 100vh;
   background: var(--bg-sidebar);
   color: var(--text-sidebar);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  overflow-y: auto;
 }
 
 .sidebar-logo {
@@ -212,6 +215,7 @@ body {
   flex: 1;
   padding: 32px;
   overflow-y: auto;
+  height: 100vh;
 }
 
 .page-header {
@@ -1116,6 +1120,40 @@ tr:hover td {
   font-size: 12px;
   color: var(--text-secondary);
   margin-bottom: 4px;
+}
+
+.workflow-output-details {
+  cursor: pointer;
+}
+
+.workflow-output-details summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workflow-output-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.workflow-output-details summary::before {
+  content: "▶";
+  font-size: 10px;
+  transition: transform 0.15s;
+}
+
+.workflow-output-details[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.workflow-output-details .toggle-hint {
+  font-size: 11px;
+  opacity: 0.5;
+}
+
+.workflow-output-details[open] .toggle-hint {
+  display: none;
 }
 
 .workflow-thread-box {

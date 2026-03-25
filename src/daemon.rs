@@ -4,11 +4,12 @@ use std::time::Duration;
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::client::BhClient;
-use crate::server::SharedState;
+use crate::db::DEFAULT_AGENT_TIMEOUT_SECS;
+use crate::server::{SharedState, process_inbox_message_side_effects};
 
 const MAX_IDLE_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_CONCURRENT_TASKS: usize = 4;
-const TASK_TIMEOUT_SECS: u64 = 300;
+const TASK_TIMEOUT_SECS: u64 = DEFAULT_AGENT_TIMEOUT_SECS as u64;
 const REMOTE_POLL_TIMEOUT: f64 = 30.0;
 
 /// Session tracker for multi-turn conversations.
@@ -114,7 +115,7 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                     );
 
                     // Notify lead that we started processing
-                    let _ = state.db.send_inbox_message(
+                    let started_message = state.db.send_inbox_message(
                         &tenant,
                         &msg.thread_id,
                         &msg.to_id,
@@ -122,6 +123,29 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                         "started",
                         None,
                     );
+                    if let Err(e) = started_message {
+                        tracing::error!(
+                            agent = msg.to_id,
+                            thread = msg.thread_id,
+                            error = %e,
+                            "Failed to write started message"
+                        );
+                    } else if let Err(e) = process_inbox_message_side_effects(
+                        &state,
+                        &tenant,
+                        &msg.thread_id,
+                        "started",
+                        None,
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            agent = msg.to_id,
+                            thread = msg.thread_id,
+                            error = %e,
+                            "Failed to process started side effects"
+                        );
+                    }
 
                     let result = invoke_runtime(
                         &agent_runtime,
@@ -147,23 +171,36 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                                 thread = msg.thread_id,
                                 "Task completed"
                             );
-                            let _ = state.db.send_inbox_message(
+                            let done_content = serde_json::json!(output.text);
+                            let done_message = state.db.send_inbox_message(
                                 &tenant,
                                 &msg.thread_id,
                                 &msg.to_id,
                                 &msg.from_id,
                                 "done",
-                                Some(&serde_json::json!(output.text)),
+                                Some(&done_content),
                             );
-                            // Update task status if this thread belongs to a task
-                            if let Ok(Some(task)) =
-                                state.db.get_task_by_thread(&tenant, &msg.thread_id)
+                            if let Err(e) = done_message {
+                                tracing::error!(
+                                    agent = msg.to_id,
+                                    thread = msg.thread_id,
+                                    error = %e,
+                                    "Failed to write done message"
+                                );
+                            } else if let Err(e) = process_inbox_message_side_effects(
+                                &state,
+                                &tenant,
+                                &msg.thread_id,
+                                "done",
+                                Some(&done_content),
+                            )
+                            .await
                             {
-                                let _ = state.db.update_task_status(
-                                    &tenant,
-                                    &task.id,
-                                    "done",
-                                    Some(&output.text),
+                                tracing::error!(
+                                    agent = msg.to_id,
+                                    thread = msg.thread_id,
+                                    error = %e,
+                                    "Failed to process done side effects"
                                 );
                             }
                         }
@@ -174,23 +211,36 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                                 error = %e,
                                 "Task failed"
                             );
-                            let _ = state.db.send_inbox_message(
+                            let failed_content = serde_json::json!(e.to_string());
+                            let failed_message = state.db.send_inbox_message(
                                 &tenant,
                                 &msg.thread_id,
                                 &msg.to_id,
                                 &msg.from_id,
                                 "failed",
-                                Some(&serde_json::json!(e.to_string())),
+                                Some(&failed_content),
                             );
-                            // Update task status if this thread belongs to a task
-                            if let Ok(Some(task)) =
-                                state.db.get_task_by_thread(&tenant, &msg.thread_id)
+                            if let Err(err) = failed_message {
+                                tracing::error!(
+                                    agent = msg.to_id,
+                                    thread = msg.thread_id,
+                                    error = %err,
+                                    "Failed to write failed message"
+                                );
+                            } else if let Err(err) = process_inbox_message_side_effects(
+                                &state,
+                                &tenant,
+                                &msg.thread_id,
+                                "failed",
+                                Some(&failed_content),
+                            )
+                            .await
                             {
-                                let _ = state.db.update_task_status(
-                                    &tenant,
-                                    &task.id,
-                                    "failed",
-                                    Some(&e.to_string()),
+                                tracing::error!(
+                                    agent = msg.to_id,
+                                    thread = msg.thread_id,
+                                    error = %err,
+                                    "Failed to process failed side effects"
                                 );
                             }
                         }

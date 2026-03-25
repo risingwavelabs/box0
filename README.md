@@ -68,6 +68,8 @@ Your agent sends tasks to the Box0 server via `b0 delegate`. The server stores t
 
 Each worker runs in its own isolated directory. Workers can also run across multiple machines. See [Multi-machine](docs/multi-machine.md).
 
+Agent runs use a 30 minute default execution timeout. This prevents longer workflow steps from failing at the old 5 minute default on first run.
+
 ## Getting started
 
 ### 1. Install
