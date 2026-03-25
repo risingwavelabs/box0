@@ -5,25 +5,27 @@
 [![docs](https://img.shields.io/badge/docs-box0-blue)](https://github.com/risingwavelabs/box0/tree/main/docs)
 [![SKILL.md](https://img.shields.io/badge/SKILL.md-agent%20onboarding-black)](https://box0.dev/skill.md)
 
-Run AI agents in parallel on one machine or many. Single Rust binary, no dependencies. Works with Claude Code and Codex.
+Box0 runs multiple AI agents in parallel across your machines. You create agents with different roles, delegate tasks to them, and collect results. It works with Claude Code and Codex. Single Rust binary, no dependencies.
 
 <p align="center">
   <img src="docs/hero.svg" alt="Box0 Architecture" width="800">
 </p>
 
-## What Box0 does
+## How it works
 
-You give your AI agent (Claude Code or Codex) access to Box0. It can then spin up other agents, each with a different role, run them in parallel, and collect the results. You type one message. Your agent handles the rest.
+A **server** coordinates everything. It stores agent definitions, routes tasks, runs the scheduler, and serves a web dashboard. Start one with `b0 server`.
 
-**Parallel code review.** Three agents review the same PR simultaneously: one for correctness, one for security, one for performance.
+**Machines** are computers that run agents. When the server starts, it registers itself as the `local` machine. Add more with `b0 machine join`. Each machine uses its own Claude Code or Codex credentials. Machines belong to the server and are shared across all workspaces.
 
-**Fan-out research.** Five agents each evaluate a different database. Your agent compares their findings.
+**Workspaces** organize agents by team. Each user gets a personal workspace. Create shared ones with `b0 workspace create` and invite members. Agents in a workspace are visible to all its members.
 
-**Scheduled monitoring.** A cron agent checks production logs every 6 hours and posts to Slack if something looks wrong.
+**Agents** do the actual work. Each agent has a name, a set of instructions, and runs on a specific machine. There are three kinds:
 
-**Divide and conquer.** Split a migration across three agents, one per module. They work in parallel, you merge the results.
+- **background** - persistent agents that stay around and handle tasks on demand. Created with `b0 agent add`.
+- **cron** - run on a schedule. Created with `b0 cron add --every 6h "..."`.
+- **temp** - one-off tasks that clean up after themselves. Created with `b0 agent temp "..."`.
 
-**Red team / blue team.** One agent implements input validation. Another tries to bypass it. They iterate until the attacker gives up.
+Your AI (Claude Code or Codex) delegates work with `b0 delegate`, waits for results with `b0 wait`, and can run multiple agents in parallel. You type one prompt. Your agent handles the rest.
 
 ## Agent onboarding
 
@@ -110,16 +112,6 @@ b0 agent add ml-agent --instructions "ML specialist." --machine gpu-box
 ```
 
 **Web dashboard.** Manage agents, view tasks, and monitor machines at `http://localhost:8080`.
-
-## Key concepts
-
-**Server.** The central coordinator. Stores agents, routes tasks, serves the web dashboard. Start with `b0 server`. One server can manage many machines and workspaces.
-
-**Machine.** A computer that runs agents. When you start `b0 server`, the server machine is automatically registered as `local`. Add more machines with `b0 machine join`. Each machine uses its own Claude Code or Codex credentials. Machines belong to the server and are shared across all workspaces.
-
-**Workspace.** A group for organizing agents and controlling team access. Each user gets a personal workspace on signup. Create shared workspaces with `b0 workspace create` and add members with `b0 workspace add-member`.
-
-**Agent.** A named AI worker with a specific role and instructions. Belongs to a workspace, runs on a machine. Created with `b0 agent add`.
 
 ## CLI reference
 
