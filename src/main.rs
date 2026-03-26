@@ -51,11 +51,6 @@ enum Command {
         #[command(subcommand)]
         command: WorkspaceCommand,
     },
-    /// Manage agent skill integrations
-    Skill {
-        #[command(subcommand)]
-        command: SkillCommand,
-    },
     /// Schedule recurring tasks
     Cron {
         #[command(subcommand)]
@@ -223,13 +218,6 @@ enum WorkspaceCommand {
         workspace: Option<String>,
         user_id: String,
     },
-}
-
-#[derive(Subcommand)]
-enum SkillCommand {
-    Show,
-    Install { agent: String },
-    Uninstall { agent: String },
 }
 
 #[derive(Subcommand)]
@@ -729,51 +717,6 @@ async fn main() {
             }
         },
 
-        Command::Skill { command } => match command {
-            SkillCommand::Show => {
-                let cfg = config::CliConfig::load();
-                print!("{}", config::CliConfig::skill_content(&cfg.server_url()));
-            }
-            SkillCommand::Install { agent } => {
-                let cfg = config::CliConfig::load();
-                let url = cfg.server_url();
-                match agent.as_str() {
-                    "claude-code" => match config::CliConfig::install_skill_claude_code(&url) {
-                        Ok(()) => println!("Skill installed for Claude Code."),
-                        Err(e) => {
-                            eprintln!("Error: {}", e);
-                            std::process::exit(1);
-                        }
-                    },
-                    "codex" => match config::CliConfig::install_skill_codex(&url) {
-                        Ok(()) => println!("Skill installed for Codex."),
-                        Err(e) => {
-                            eprintln!("Error: {}", e);
-                            std::process::exit(1);
-                        }
-                    },
-                    _ => {
-                        eprintln!("Unknown agent: {}. Supported: claude-code, codex", agent);
-                        std::process::exit(1);
-                    }
-                }
-            }
-            SkillCommand::Uninstall { agent } => match agent.as_str() {
-                "claude-code" => {
-                    let _ = config::CliConfig::uninstall_skill_claude_code();
-                    println!("Skill uninstalled for Claude Code.");
-                }
-                "codex" => {
-                    let _ = config::CliConfig::uninstall_skill_codex();
-                    println!("Skill uninstalled for Codex.");
-                }
-                _ => {
-                    eprintln!("Unknown agent: {}. Supported: claude-code, codex", agent);
-                    std::process::exit(1);
-                }
-            },
-        },
-
         Command::Cron { command } => match command {
             CronCommand::Add {
                 workspace,
@@ -1087,12 +1030,10 @@ async fn cmd_login(server_url: &str, api_key: Option<&str>) {
     if let Some(ref w) = cfg.default_workspace {
         println!("Default workspace: {}", w);
     }
-    println!("To install agent skill: b0 skill install claude-code  (or: codex)");
+    println!("To install agent skill: npx skills add risingwavelabs/skills --skill b0");
 }
 
 fn cmd_logout() {
-    let _ = config::CliConfig::uninstall_skill_claude_code();
-    let _ = config::CliConfig::uninstall_skill_codex();
     let cfg = config::CliConfig::load();
     let _ = cfg.clear();
     println!("Logged out.");
@@ -1108,8 +1049,6 @@ fn cmd_reset() {
             let _ = std::fs::remove_file(&path);
         }
     }
-    let _ = config::CliConfig::uninstall_skill_claude_code();
-    let _ = config::CliConfig::uninstall_skill_codex();
     let cfg = config::CliConfig::load();
     let _ = cfg.clear();
     println!("Reset complete.");

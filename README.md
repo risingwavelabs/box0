@@ -128,12 +128,10 @@ pnpm build
 
 ### 3. Teach your agent to use Box0
 
-For Claude Code:
 Teach your agent to use Box0 ([how skills work](docs/skills.md)):
 
 ```bash
-b0 skill install claude-code
-b0 skill install codex
+npx skills add risingwavelabs/skills --skill b0
 ```
 
 Then open Claude Code or Codex and say:
@@ -238,8 +236,6 @@ b0 machine ls                                List machines
 ```
 b0 workspace create <name>                   Create workspace
 b0 workspace add-member <ws> <user-id>       Add member
-b0 skill install claude-code                 Install skill for Claude Code
-b0 skill install codex                       Install skill for Codex
 ```
 
 ## Learn more

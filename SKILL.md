@@ -90,11 +90,8 @@ If the server is local (localhost or 127.0.0.1), skip this step - the local mach
 ### Step 6: Install the skill
 
 ```bash
-which claude && b0 skill install claude-code
-which codex && b0 skill install codex
+npx skills add risingwavelabs/skills --skill b0
 ```
-
-On Windows, use `where` instead of `which`.
 
 ### Step 7: Verify
 

@@ -5,11 +5,10 @@ A skill is a [SKILL.md](https://code.claude.com/docs/en/skills.md) file that get
 ## Install
 
 ```bash
-b0 skill install claude-code
-b0 skill install codex
+npx skills add risingwavelabs/skills --skill b0
 ```
 
-Pick one or both. You only need to do this once per machine.
+This uses [npx skills](https://github.com/nicepkg/skills) to install the Box0 skill. You only need to do this once per machine.
 
 ## What gets installed
 
@@ -34,7 +33,7 @@ allowed-tools:
 
 Claude uses the `description` field to decide when to auto-load the skill. `allowed-tools: Bash` lets the agent run `b0` commands without permission prompts.
 
-**Codex**: appends a marked section to `~/.codex/AGENTS.md`. Codex reads [AGENTS.md](https://developers.openai.com/codex/guides/agents-md) on startup as custom instructions.
+**Codex**: writes instructions to `~/.codex/AGENTS.md`. Codex reads [AGENTS.md](https://developers.openai.com/codex/guides/agents-md) on startup as custom instructions.
 
 ## What the agent learns
 
@@ -50,17 +49,6 @@ The skill body teaches the agent:
 - **Proactive status**: run `b0 status` before responding to check for completed results
 - **Error handling**: retry, try a different agent, handle it yourself, or report to user
 
-## View the installed content
+## View the skill content
 
-```bash
-b0 skill show
-```
-
-Prints the exact SKILL.md content that gets installed.
-
-## Uninstall
-
-```bash
-b0 skill uninstall claude-code
-b0 skill uninstall codex
-```
+The full skill content is in [SKILL.md](../SKILL.md) at the repository root.

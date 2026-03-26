@@ -2487,8 +2487,9 @@ fn print_banner(
     lines.push(banner_empty());
     lines.push(banner_line("   Get started:"));
     lines.push(banner_empty());
-    lines.push(banner_line("   1. b0 skill install claude-code"));
-    lines.push(banner_line("      or: b0 skill install codex"));
+    lines.push(banner_line(
+        "   1. npx skills add risingwavelabs/skills --skill b0",
+    ));
     lines.push(banner_empty());
     lines.push(banner_line(
         "   2. b0 agent add <name> --instructions \"...\"",

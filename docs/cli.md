@@ -82,18 +82,10 @@ b0 workspace add-member <workspace> <user-id>   Add user to workspace
 
 ## Skills
 
+Skills teach your agent how to use Box0. Install via [npx skills](https://github.com/nicepkg/skills):
+
+```bash
+npx skills add risingwavelabs/skills --skill b0
 ```
-b0 skill install claude-code               Install Box0 skill for Claude Code
-b0 skill install codex                     Install Box0 skill for Codex
-b0 skill uninstall <agent>                 Remove installed skill
-b0 skill show                              Print skill content to stdout
-```
 
-### What skills do
-
-Skills teach your agent how to use Box0. When installed:
-
-- **Claude Code**: writes a skill file to `~/.claude/skills/b0/SKILL.md`. Claude Code reads this and learns the `b0 delegate` / `b0 wait` workflow.
-- **Codex**: appends a marked section to `~/.codex/AGENTS.md`.
-
-After installation, your agent knows how to create agents, delegate tasks, and collect results without any manual instruction.
+See [Skills](../docs/skills.md) for details on what gets installed and how it works.

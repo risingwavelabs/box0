@@ -11,7 +11,7 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
 - README code blocks must be copy-paste safe. No inline comments on the same line as commands. No blocking commands (like `b0 server`) in the same block as other commands. Use blockquotes for conversation examples, not code blocks.
 - Always test changes before committing. Run `cargo test` at minimum (unit + integration tests). For user-facing features, run `tests/e2e.sh` which requires Claude Code or Codex.
 - After code changes, always update README.md, CLAUDE.md, docs/, and the skill content in config.rs if affected. This is critical.
-- SKILL.md (repo root) and config.rs `skill_content()` must stay in sync. Any change to CLI commands, flags, or agent behavior must be reflected in both. The usage section of SKILL.md and the body of `skill_content()` should be identical.
+- SKILL.md (repo root) is the canonical skill definition. Any change to CLI commands, flags, or agent behavior must be reflected in it.
 - Commit messages: imperative mood, concise first line, details in body.
 - No documentation files unless explicitly requested.
 
@@ -72,8 +72,9 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
 - `b0 login` on remote machines auto-sets default_workspace from user's first workspace.
 - `b0 agent temp` is non-blocking (same as `b0 delegate`). Temp agents auto-cleanup on `b0 wait`.
 - `b0 delegate` without `--thread` creates new conversation. With `--thread` continues existing one.
-- `b0 skill install claude-code` writes `~/.claude/skills/b0/SKILL.md` (directory format, not plain file).
-- `b0 skill install codex` appends marked section to `~/.codex/AGENTS.md`.
+- Skills are installed via `npx skills add risingwavelabs/skills --skill b0`, not via the b0 CLI.
+- Claude Code skill lives at `~/.claude/skills/b0/SKILL.md` (directory format, not plain file).
+- Codex skill lives in `~/.codex/AGENTS.md`.
 
 ## Distribution
 
