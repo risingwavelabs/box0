@@ -2539,7 +2539,9 @@ mod tests {
             "local",
             "auto",
             &alice.id,
-            "normal",
+            "background",
+            None,
+            None,
         )
         .unwrap();
 
@@ -2669,7 +2671,16 @@ mod tests {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
         db.register_agent(
-            "alice", "reviewer", "", "Review.", "local", "auto", &alice.id, "normal",
+            "alice",
+            "reviewer",
+            "",
+            "Review.",
+            "local",
+            "auto",
+            &alice.id,
+            "background",
+            None,
+            None,
         )
         .unwrap();
 

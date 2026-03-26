@@ -600,7 +600,7 @@ async fn invoke_codex_cli(
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|e| {
+    let child = cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             anyhow::anyhow!("codex CLI not found. Install it or use --runtime claude")
         } else {
