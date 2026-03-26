@@ -8,9 +8,14 @@ use crate::db::DEFAULT_AGENT_TIMEOUT_SECS;
 use crate::server::{SharedState, process_inbox_message_side_effects};
 
 const MAX_IDLE_INTERVAL: Duration = Duration::from_secs(30);
-const MAX_CONCURRENT_TASKS: usize = 4;
 const TASK_TIMEOUT_SECS: u64 = DEFAULT_AGENT_TIMEOUT_SECS as u64;
 const REMOTE_POLL_TIMEOUT: f64 = 30.0;
+
+fn max_concurrent_tasks() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+}
 
 /// Session tracker for multi-turn conversations.
 /// Maps thread_id -> Claude CLI session_id.
@@ -21,7 +26,9 @@ type Sessions = Arc<Mutex<HashMap<String, String>>>;
 pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
     tracing::info!(workspace = %workspace_root.display(), "Machine daemon started (local)");
 
-    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_TASKS));
+    let max_tasks = max_concurrent_tasks();
+    tracing::info!(max_concurrent_tasks = max_tasks, "Daemon concurrency limit");
+    let semaphore = Arc::new(Semaphore::new(max_tasks));
     let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
     let workspace_root = Arc::new(workspace_root);
 
@@ -302,7 +309,9 @@ pub async fn run_remote(server_url: &str, machine_id: &str, api_key: Option<&str
             .join("agents");
     let workspace_root = Arc::new(workspace_root);
 
-    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_TASKS));
+    let max_tasks = max_concurrent_tasks();
+    tracing::info!(max_concurrent_tasks = max_tasks, "Daemon concurrency limit");
+    let semaphore = Arc::new(Semaphore::new(max_tasks));
     let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
     let heartbeat_interval = Duration::from_secs(30);
     let mut last_heartbeat = std::time::Instant::now();
