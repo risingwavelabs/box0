@@ -1,4 +1,6 @@
-# Box0: Multi-Agent Platform
+# Box0
+
+__Open-Source Platform for Subagents and Agent Teams.__
 
 [![npm](https://img.shields.io/npm/v/@box0/cli)](https://www.npmjs.com/package/@box0/cli)
 [![license](https://img.shields.io/github/license/risingwavelabs/box0)](LICENSE)
