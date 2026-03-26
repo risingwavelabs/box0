@@ -1516,6 +1516,40 @@ async fn cmd_wait(wait_all: bool, timeout: Option<f64>) {
             break;
         }
 
+        // Check for offline machines if any task has been queued > 30s
+        let mut warned_machines: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for info in pending.threads.values() {
+            let state = status.get(info.agent.as_str()).copied().unwrap_or("queued");
+            if state != "queued" { continue; }
+            let queued_secs = if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&info.created_at) {
+                (chrono::Utc::now() - created.with_timezone(&chrono::Utc)).num_seconds()
+            } else { 0 };
+            if queued_secs > 30 {
+                // Look up agent's machine and check heartbeat
+                if let Ok(agent) = client.get_agent(&info.workspace, &info.agent).await {
+                    if !warned_machines.contains(&agent.machine_id) {
+                        if let Ok(machines) = client.list_machines().await {
+                            if let Some(machine) = machines.iter().find(|m| m.id == agent.machine_id) {
+                                let offline = machine.last_heartbeat.map(|hb| {
+                                    (chrono::Utc::now() - hb).num_seconds() > 60
+                                }).unwrap_or(true);
+                                if offline {
+                                    let ago = machine.last_heartbeat.map(|hb| {
+                                        format!("{}s ago", (chrono::Utc::now() - hb).num_seconds())
+                                    }).unwrap_or_else(|| "never".to_string());
+                                    clear_status(is_tty, status_lines_printed);
+                                    status_lines_printed = 0;
+                                    eprintln!("Warning: machine \"{}\" is offline (last heartbeat: {}).", agent.machine_id, ago);
+                                    eprintln!("Agent \"{}\" cannot execute until the daemon is restarted on that machine.\n", info.agent);
+                                    warned_machines.insert(agent.machine_id.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Refresh elapsed times in status display
         if !pending.threads.is_empty() && is_tty {
             clear_status(is_tty, status_lines_printed);
