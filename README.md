@@ -9,11 +9,11 @@
 
 __Open-Source Platform for Subagents and Agent Teams.__
 
+[![Slack](https://img.shields.io/badge/Slack-join-4A154B?logo=slack)](https://go.risingwave.com/slack)
 [![npm](https://img.shields.io/npm/v/@box0/cli)](https://www.npmjs.com/package/@box0/cli)
 [![license](https://img.shields.io/github/license/risingwavelabs/box0)](LICENSE)
 [![docs](https://img.shields.io/badge/docs-box0-blue)](https://github.com/risingwavelabs/box0/tree/main/docs)
 [![SKILL.md](https://img.shields.io/badge/SKILL.md-agent%20onboarding-black)](SKILL.md)
-[![Slack](https://img.shields.io/badge/Slack-join-4A154B?logo=slack)](https://go.risingwave.com/slack)
 
 </div>
 
