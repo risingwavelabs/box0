@@ -51,6 +51,11 @@ enum Command {
         #[command(subcommand)]
         command: WorkspaceCommand,
     },
+    /// Install agent skill
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommand,
+    },
     /// Schedule recurring tasks
     Cron {
         #[command(subcommand)]
@@ -217,6 +222,15 @@ enum WorkspaceCommand {
     AddMember {
         workspace: Option<String>,
         user_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillCommand {
+    /// Install skill for Claude Code
+    Install {
+        /// Agent runtime: claude-code or codex
+        agent: String,
     },
 }
 
@@ -711,6 +725,22 @@ async fn main() {
                     Ok(()) => println!("User {} added to workspace \"{}\".", user_id, workspace),
                     Err(e) => {
                         eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
+
+        Command::Skill { command } => match command {
+            SkillCommand::Install { agent } => {
+                match agent.as_str() {
+                    "claude-code" => cmd_skill_install_claude_code().await,
+                    "codex" => {
+                        eprintln!("Codex skill install not yet supported. Use: npx skills add risingwavelabs/skills --skill b0");
+                        std::process::exit(1);
+                    }
+                    _ => {
+                        eprintln!("Unknown agent: {}. Supported: claude-code", agent);
                         std::process::exit(1);
                     }
                 }
@@ -1600,4 +1630,42 @@ async fn cmd_machine_join(server_url: &str, name: Option<&str>, api_key: Option<
 
     println!("Joining as machine \"{}\" -> {}", machine_id, server_url);
     daemon::run_remote(server_url, &machine_id, api_key).await;
+}
+
+async fn cmd_skill_install_claude_code() {
+    let url = "https://raw.githubusercontent.com/risingwavelabs/skills/main/skills/b0/SKILL.md";
+    let client = reqwest::Client::new();
+    let resp = match client.get(url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: failed to download skill: {}", e);
+            std::process::exit(1);
+        }
+    };
+    if !resp.status().is_success() {
+        eprintln!("Error: failed to download skill (HTTP {})", resp.status());
+        std::process::exit(1);
+    }
+    let content = match resp.text().await {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Error: failed to read skill content: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let dir = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".claude")
+        .join("skills")
+        .join("b0");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("Error: failed to create skill directory: {}", e);
+        std::process::exit(1);
+    }
+    if let Err(e) = std::fs::write(dir.join("SKILL.md"), &content) {
+        eprintln!("Error: failed to write skill file: {}", e);
+        std::process::exit(1);
+    }
+    println!("Skill installed for Claude Code.");
 }
