@@ -13,7 +13,6 @@ const markup = `
   <nav class="sidebar">
     <div class="sidebar-logo">Box<span>0</span></div>
     <div class="sidebar-nav">
-      <a href="#/tasks" data-page="tasks"><span class="nav-icon">T</span> Tasks</a>
       <a href="#/workflows" data-page="workflows"><span class="nav-icon">W</span> Workflows</a>
     </div>
     <div class="sidebar-nav" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:8px">
@@ -195,7 +194,7 @@ export function mountLegacyDashboard(root) {
   App.setWorkspace = function setWorkspace(name) {
     App.currentWorkspace = name
     localStorage.setItem('b0_workspace', name)
-    App.router.navigate(location.hash || '#/tasks')
+    App.router.navigate(location.hash || '#/workflows')
   }
 
   App.workspacePath = function workspacePath(path) {
@@ -204,9 +203,6 @@ export function mountLegacyDashboard(root) {
 
   App.router = {
     routes: {
-      '/tasks': () => {
-        App.tasksPage.render()
-      },
       '/machines': () => {
         App.machines.render()
       },
@@ -231,20 +227,12 @@ export function mountLegacyDashboard(root) {
     },
 
     onHashChange() {
-      if (App.tasksPage._boardTimer) {
-        clearInterval(App.tasksPage._boardTimer)
-        App.tasksPage._boardTimer = null
-      }
-      if (App.tasksPage._chatTimer) {
-        clearInterval(App.tasksPage._chatTimer)
-        App.tasksPage._chatTimer = null
-      }
       if (App.workflowDetail && App.workflowDetail._runTimer) {
         clearInterval(App.workflowDetail._runTimer)
         App.workflowDetail._runTimer = null
       }
 
-      const hash = location.hash || '#/tasks'
+      const hash = location.hash || '#/workflows'
       const path = hash.slice(1)
 
       document.querySelectorAll('.sidebar-nav a').forEach((link) => {
@@ -252,14 +240,6 @@ export function mountLegacyDashboard(root) {
       })
 
       const parts = path.split('/').filter(Boolean)
-
-      if (parts[0] === 'tasks' && parts[1]) {
-        App.tasksPage.render(decodeURIComponent(parts[1]))
-        document.querySelectorAll('.sidebar-nav a').forEach((link) => {
-          link.classList.toggle('active', link.getAttribute('data-page') === 'tasks')
-        })
-        return
-      }
 
       if (parts[0] === 'machines' && parts[1]) {
         App.machineDetail.render(decodeURIComponent(parts[1]))
@@ -287,10 +267,10 @@ export function mountLegacyDashboard(root) {
         return
       }
 
-      const base = `/${parts[0] || 'machines'}`
+      const base = `/${parts[0] || 'workflows'}`
       const handler = App.router.routes[base]
       if (handler) handler()
-      else App.tasksPage.render()
+      else App.workflowsPage.render()
     },
 
     navigate(hash) {
@@ -630,234 +610,6 @@ export function mountLegacyDashboard(root) {
         clearInterval(App.poll._timers[id])
       })
       App.poll._timers = {}
-    },
-  }
-
-  App.tasksPage = {
-    _boardTimer: null,
-    _chatTimer: null,
-    _selectedTaskId: null,
-    _tasks: [],
-
-    render(taskId) {
-      App.poll.stopAll()
-      if (App.tasksPage._boardTimer) clearInterval(App.tasksPage._boardTimer)
-      if (App.tasksPage._chatTimer) clearInterval(App.tasksPage._chatTimer)
-
-      const mc = document.getElementById('main-content')
-      mc.innerHTML =
-        '<div class="tasks-layout">' +
-        '<div class="tasks-chat" id="tasks-chat">' +
-        '<div class="tasks-chat-header" id="tasks-chat-header">Select a task</div>' +
-        '<div class="tasks-chat-messages" id="tasks-chat-messages">' +
-        '<div class="tasks-chat-empty">Select a task from the board, or create a new one.</div>' +
-        '</div>' +
-        '<div class="tasks-chat-input" id="tasks-chat-input" style="display:none">' +
-        '<input type="text" id="tasks-chat-field" placeholder="Send a message..." onkeydown="if(event.key===\'Enter\')App.tasksPage.sendMessage()">' +
-        '<button class="btn btn-primary" onclick="App.tasksPage.sendMessage()">Send</button>' +
-        '</div>' +
-        '</div>' +
-        '<div class="tasks-board" id="tasks-board">' +
-        '<div class="tasks-board-header">' +
-        '<h3>Tasks</h3>' +
-        '<button class="btn btn-primary btn-sm" onclick="App.tasksPage.showAdd()">+ Add</button>' +
-        '</div>' +
-        '<div id="tasks-board-list">Loading...</div>' +
-        '</div>' +
-        '</div>'
-
-      App.tasksPage._selectedTaskId = taskId || null
-      App.tasksPage.loadBoard()
-      App.tasksPage._boardTimer = window.setInterval(() => {
-        App.tasksPage.loadBoard()
-      }, 5000)
-
-      if (taskId) {
-        App.tasksPage.selectTask(taskId)
-      }
-    },
-
-    loadBoard() {
-      App.api
-        .get(App.workspacePath('/tasks'))
-        .then((data) => {
-          App.tasksPage._tasks = data.tasks || []
-          App.tasksPage.renderBoard()
-        })
-        .catch(() => {})
-    },
-
-    renderBoard() {
-      const tasks = App.tasksPage._tasks
-      const groups = { running: [], needs_input: [], done: [], failed: [] }
-      tasks.forEach((task) => {
-        if (groups[task.status]) groups[task.status].push(task)
-        else groups.running.push(task)
-      })
-
-      let html = ''
-
-      if (groups.running.length) {
-        html += '<div class="task-group"><div class="task-group-label">Running</div>'
-        groups.running.forEach((task) => {
-          html += App.tasksPage.renderCard(task)
-        })
-        html += '</div>'
-      }
-
-      if (groups.needs_input.length) {
-        html += '<div class="task-group"><div class="task-group-label">Needs Input</div>'
-        groups.needs_input.forEach((task) => {
-          html += App.tasksPage.renderCard(task)
-        })
-        html += '</div>'
-      }
-
-      if (groups.done.length) {
-        html += '<div class="task-group"><div class="task-group-label">Done</div>'
-        groups.done.forEach((task) => {
-          html += App.tasksPage.renderCard(task)
-        })
-        html += '</div>'
-      }
-
-      if (groups.failed.length) {
-        html += '<div class="task-group"><div class="task-group-label">Failed</div>'
-        groups.failed.forEach((task) => {
-          html += App.tasksPage.renderCard(task)
-        })
-        html += '</div>'
-      }
-
-      if (!tasks.length) {
-        html =
-          '<div style="color:var(--text-secondary);font-size:13px;text-align:center;padding:40px 0">No tasks yet. Click + Add to create one.</div>'
-      }
-
-      document.getElementById('tasks-board-list').innerHTML = html
-    },
-
-    renderCard(task) {
-      const selected = App.tasksPage._selectedTaskId === task.id ? ' selected' : ''
-      return (
-        `<div class="task-card${selected}" onclick="App.tasksPage.selectTask('${escAttr(task.id)}')">` +
-        `<div class="task-card-title">${esc(task.title)}</div>` +
-        '<div class="task-card-meta">' +
-        `<span class="task-status-dot ${esc(task.status)}"></span> ` +
-        `${esc(task.status)} &middot; ${timeAgo(task.created_at)}` +
-        '</div>' +
-        '</div>'
-      )
-    },
-
-    selectTask(taskId) {
-      App.tasksPage._selectedTaskId = taskId
-      if (App.tasksPage._chatTimer) clearInterval(App.tasksPage._chatTimer)
-
-      App.tasksPage.renderBoard()
-      App.tasksPage.loadTask(taskId)
-      App.tasksPage._chatTimer = window.setInterval(() => {
-        App.tasksPage.loadTask(taskId)
-      }, 3000)
-    },
-
-    loadTask(taskId) {
-      App.api
-        .get(App.workspacePath(`/tasks/${taskId}`))
-        .then((data) => {
-          App.tasksPage.renderChat(data)
-        })
-        .catch(() => {})
-    },
-
-    renderChat(data) {
-      const task = data.task
-      const messages = data.messages || []
-      const subtasks = data.subtasks || []
-
-      document.getElementById('tasks-chat-header').textContent = task.title
-      document.getElementById('tasks-chat-input').style.display = 'flex'
-
-      let html = ''
-
-      messages.forEach((message) => {
-        if (message.type === 'started') return
-
-        const isUser = message.type === 'request' || message.type === 'answer'
-        const cls = isUser ? 'user' : 'assistant'
-        let content = ''
-        if (message.content) {
-          content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
-          if (content.startsWith('"') && content.endsWith('"')) {
-            try {
-              content = JSON.parse(content)
-            } catch {
-              // Keep original string if not valid JSON.
-            }
-          }
-        }
-        if (!content) return
-
-        html +=
-          `<div class="chat-msg ${cls}">` +
-          `<div class="chat-msg-bubble">${esc(content)}</div>` +
-          `<div class="chat-msg-meta">${timeAgo(message.created_at)}</div>` +
-          '</div>'
-      })
-
-      if (subtasks.length) {
-        html +=
-          '<div class="subtask-list"><div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Sub-tasks</div>'
-        subtasks.forEach((subtask) => {
-          html +=
-            '<div class="subtask-item">' +
-            `<span class="task-status-dot ${esc(subtask.status)}"></span> ` +
-            `<span>${esc(subtask.title)}</span>` +
-            `<span style="margin-left:auto;font-size:11px;color:var(--text-secondary)">${esc(subtask.status)}</span>` +
-            '</div>'
-        })
-        html += '</div>'
-      }
-
-      if (!html) {
-        html = '<div class="tasks-chat-empty">Waiting for response...</div>'
-      }
-
-      const el = document.getElementById('tasks-chat-messages')
-      el.innerHTML = html
-      el.scrollTop = el.scrollHeight
-    },
-
-    sendMessage() {
-      const field = document.getElementById('tasks-chat-field')
-      const content = field.value.trim()
-      if (!content || !App.tasksPage._selectedTaskId) return
-      field.value = ''
-
-      App.api
-        .post(App.workspacePath(`/tasks/${App.tasksPage._selectedTaskId}/messages`), { content })
-        .then(() => {
-          App.tasksPage.loadTask(App.tasksPage._selectedTaskId)
-        })
-        .catch((error) => {
-          App.toast.error(error.message)
-        })
-    },
-
-    showAdd() {
-      const title = prompt('What do you need?')
-      if (!title || !title.trim()) return
-
-      App.api
-        .post(App.workspacePath('/tasks'), { title: title.trim() })
-        .then((task) => {
-          App.toast.success('Task created')
-          App.tasksPage.loadBoard()
-          App.tasksPage.selectTask(task.id)
-        })
-        .catch((error) => {
-          App.toast.error(error.message)
-        })
     },
   }
 

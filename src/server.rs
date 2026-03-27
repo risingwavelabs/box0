@@ -110,18 +110,6 @@ struct InviteRequest {
     name: String,
 }
 
-#[derive(Deserialize)]
-struct CreateTaskRequest {
-    title: String,
-    #[serde(default)]
-    parent_task_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct TaskMessageRequest {
-    content: String,
-}
-
 #[derive(Clone, Deserialize)]
 struct WorkflowNodeRequest {
     #[serde(default)]
@@ -278,24 +266,6 @@ pub(crate) async fn process_inbox_message_side_effects(
     msg_type: &str,
     content: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
-    // Auto-update task status based on message type.
-    if msg_type == "done" || msg_type == "failed" {
-        if let Ok(Some(task)) = state.db.get_task_by_thread(workspace_name, thread_id) {
-            let status = if msg_type == "done" { "done" } else { "failed" };
-            let result = content.and_then(|v| v.as_str());
-            state
-                .db
-                .update_task_status(workspace_name, &task.id, status, result)?;
-        }
-    }
-    if msg_type == "question" {
-        if let Ok(Some(task)) = state.db.get_task_by_thread(workspace_name, thread_id) {
-            state
-                .db
-                .update_task_status(workspace_name, &task.id, "needs_input", None)?;
-        }
-    }
-
     handle_workflow_thread_message(state, workspace_name, thread_id, msg_type, content).await?;
     state.inbox_notify.notify_waiters();
     Ok(())
@@ -989,174 +959,6 @@ async fn list_users_handler(
         Ok(users) => (StatusCode::OK, Json(serde_json::json!({"users": users}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
-}
-
-// --- Task handlers ---
-
-async fn create_task_handler(
-    State(state): State<SharedState>,
-    Extension(caller): Extension<Caller>,
-    Path(workspace_name): Path<String>,
-    Json(req): Json<CreateTaskRequest>,
-) -> impl IntoResponse {
-    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
-        return e;
-    }
-
-    if req.title.trim().is_empty() {
-        return error_response(StatusCode::BAD_REQUEST, "title is required");
-    }
-
-    let thread_id = format!("thread-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    let from_id = format!("web-{}", caller.user.id);
-
-    // Check that "local" machine exists (it won't if server was started with --no-local)
-    if let Ok(None) = state.db.get_machine_owner("local") {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            "no local machine available. This server was started with --no-local. Register a machine first: b0 machine join <server-url> --name <name> --key <key>",
-        );
-    }
-
-    // Auto-create a temp agent for this task
-    let agent_name = format!("task-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    let default_instructions = "You are a helpful assistant. Complete the task. Be concise.";
-    if let Err(e) = state.db.register_agent(
-        &workspace_name,
-        &agent_name,
-        "",
-        default_instructions,
-        "local",
-        "auto",
-        &caller.user.id,
-        "temp",
-        None,
-        None,
-    ) {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-    }
-
-    let task = match state.db.create_task(
-        &workspace_name,
-        &req.title,
-        &agent_name,
-        &thread_id,
-        req.parent_task_id.as_deref(),
-        &caller.user.id,
-    ) {
-        Ok(t) => t,
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
-
-    // Send inbox message to task agent
-    if let Err(e) = state.db.send_inbox_message(
-        &workspace_name,
-        &thread_id,
-        &from_id,
-        &agent_name,
-        "request",
-        Some(&serde_json::json!(req.title)),
-    ) {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-    }
-    state.inbox_notify.notify_waiters();
-
-    (
-        StatusCode::CREATED,
-        Json(serde_json::to_value(&task).unwrap()),
-    )
-        .into_response()
-}
-
-async fn list_tasks_handler(
-    State(state): State<SharedState>,
-    Extension(caller): Extension<Caller>,
-    Path(workspace_name): Path<String>,
-) -> impl IntoResponse {
-    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
-        return e;
-    }
-    match state.db.list_tasks(&workspace_name) {
-        Ok(tasks) => (StatusCode::OK, Json(serde_json::json!({"tasks": tasks}))).into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
-}
-
-async fn get_task_handler(
-    State(state): State<SharedState>,
-    Extension(caller): Extension<Caller>,
-    Path((workspace_name, task_id)): Path<(String, String)>,
-) -> impl IntoResponse {
-    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
-        return e;
-    }
-    let task = match state.db.get_task(&workspace_name, &task_id) {
-        Ok(Some(t)) => t,
-        Ok(None) => return error_response(StatusCode::NOT_FOUND, "task not found"),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
-
-    let messages = state
-        .db
-        .get_thread_messages(&workspace_name, &task.thread_id)
-        .unwrap_or_default();
-    let subtasks = state
-        .db
-        .get_subtasks(&workspace_name, &task_id)
-        .unwrap_or_default();
-
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "task": task,
-            "messages": messages,
-            "subtasks": subtasks,
-        })),
-    )
-        .into_response()
-}
-
-async fn send_task_message_handler(
-    State(state): State<SharedState>,
-    Extension(caller): Extension<Caller>,
-    Path((workspace_name, task_id)): Path<(String, String)>,
-    Json(req): Json<TaskMessageRequest>,
-) -> impl IntoResponse {
-    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
-        return e;
-    }
-
-    if req.content.trim().is_empty() {
-        return error_response(StatusCode::BAD_REQUEST, "content is required");
-    }
-
-    let task = match state.db.get_task(&workspace_name, &task_id) {
-        Ok(Some(t)) => t,
-        Ok(None) => return error_response(StatusCode::NOT_FOUND, "task not found"),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
-
-    let from_id = format!("web-{}", caller.user.id);
-
-    // Send as "answer" to resume the agent's session
-    if let Err(e) = state.db.send_inbox_message(
-        &workspace_name,
-        &task.thread_id,
-        &from_id,
-        &task.agent_name,
-        "answer",
-        Some(&serde_json::json!(req.content)),
-    ) {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-    }
-    state.inbox_notify.notify_waiters();
-
-    // Set task status back to running
-    let _ = state
-        .db
-        .update_task_status(&workspace_name, &task_id, "running", None);
-
-    (StatusCode::OK, Json(serde_json::json!({"status": "sent"}))).into_response()
 }
 
 // --- Workflow handlers ---
@@ -2351,19 +2153,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route(
             "/workspaces/{workspace_name}/workflow-runs/{run_id}/steps/{step_run_id}/input",
             post(workflow_step_input_handler),
-        )
-        // Tasks (workspace-scoped)
-        .route(
-            "/workspaces/{workspace_name}/tasks",
-            get(list_tasks_handler).post(create_task_handler),
-        )
-        .route(
-            "/workspaces/{workspace_name}/tasks/{task_id}",
-            get(get_task_handler),
-        )
-        .route(
-            "/workspaces/{workspace_name}/tasks/{task_id}/messages",
-            post(send_task_message_handler),
         )
         // Cron jobs (workspace-scoped)
         .route(
