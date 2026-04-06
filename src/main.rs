@@ -189,19 +189,6 @@ enum AgentCommand {
         workspace: Option<String>,
         name: String,
     },
-    Temp {
-        #[arg(long)]
-        workspace: Option<String>,
-        task: String,
-        #[arg(
-            long,
-            default_value = "You are a helpful assistant. Complete the task. Be concise."
-        )]
-        instructions: String,
-        /// Runtime: auto (default), claude, or codex
-        #[arg(long, default_value = "auto")]
-        runtime: String,
-    },
 }
 
 #[derive(Subcommand)]
@@ -610,30 +597,6 @@ async fn main() {
                         std::process::exit(1);
                     }
                 }
-            }
-            AgentCommand::Temp {
-                workspace,
-                task,
-                instructions,
-                runtime,
-            } => {
-                let workspace = resolve_workspace(workspace);
-                let task_content = if !std::io::stdin().is_terminal() {
-                    use std::io::Read;
-                    let mut buf = String::new();
-                    std::io::stdin()
-                        .read_to_string(&mut buf)
-                        .expect("failed to read stdin");
-                    if !buf.trim().is_empty() {
-                        format!("{}\n\n{}", task, buf)
-                    } else {
-                        task
-                    }
-                } else {
-                    task
-                };
-                let task_content = expand_file_refs(&task_content);
-                cmd_agent_temp(&workspace, &task_content, &instructions, &runtime).await;
             }
         },
 
@@ -1206,66 +1169,6 @@ fn cmd_admin_ensure(
             println!("Use this key for other services. Existing CLI login was not changed.");
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
-        }
-    }
-}
-
-async fn cmd_agent_temp(workspace: &str, task: &str, instructions: &str, runtime: &str) {
-    let mut cfg = config::CliConfig::load();
-    let lead_id = cfg.lead_id();
-    let client = make_client(&cfg);
-
-    let temp_name = format!("temp-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    if let Err(e) = client
-        .register_agent(
-            workspace,
-            &temp_name,
-            "",
-            instructions,
-            "local",
-            runtime,
-            "temp",
-            None,
-            None,
-        )
-        .await
-    {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
-    }
-
-    let thread_id = format!("thread-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    match client
-        .send_message(
-            workspace,
-            &temp_name,
-            &thread_id,
-            &lead_id,
-            "request",
-            Some(&serde_json::json!(task)),
-        )
-        .await
-    {
-        Ok(_) => {
-            let _lock = config::CliConfig::lock_pending();
-            let mut pending = config::CliConfig::load_pending();
-            pending.threads.insert(
-                thread_id.clone(),
-                config::PendingThread {
-                    agent: temp_name,
-                    workspace: workspace.to_string(),
-                    task: task.to_string(),
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                    kind: "temp".to_string(),
-                },
-            );
-            let _ = config::CliConfig::save_pending(&pending);
-            println!("{}", thread_id);
-        }
-        Err(e) => {
-            let _ = client.remove_agent(workspace, &temp_name).await;
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
