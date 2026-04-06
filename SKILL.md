@@ -13,7 +13,7 @@ allowed-tools:
 
 # Box0 (`b0`) Multi-Agent Platform
 
-Run AI agents in parallel on one machine or many. Delegate tasks, collect results, schedule cron jobs.
+Run AI agents in parallel. Delegate tasks, collect results, schedule cron jobs, trigger agents via webhook.
 
 ## Setup
 
@@ -69,25 +69,7 @@ b0 login <server-url> --key <api-key>
 
 The user must provide the server URL and API key. After login, continue to Step 5.
 
-### Step 5: Register this machine (remote servers only)
-
-If `b0 status` shows a remote server (not `localhost` or `127.0.0.1`), check if this machine is registered:
-
-```bash
-b0 machine ls
-```
-
-If no machines are listed, or if agent creation later fails with "no local machine", register this machine. Read `server_url` and `api_key` from `~/.b0/config.toml`, then run:
-
-```bash
-b0 machine join <server-url> --name <hostname> --key <api-key>
-```
-
-Replace `<server-url>` with the server URL, `<hostname>` with this machine's hostname, and `<api-key>` with the API key from the config file.
-
-If the server is local (localhost or 127.0.0.1), skip this step - the local machine is registered automatically.
-
-### Step 6: Install the skill
+### Step 5: Install the skill
 
 ```bash
 npx skills add risingwavelabs/skills --skill b0
@@ -111,13 +93,13 @@ When the user's request could benefit from specialized agents or parallel execut
 
 ## Choosing an agent
 
-**Always use temp agents unless the user explicitly names an existing agent.** `b0 agent temp "<task>"` is the default for everything. No setup, no cleanup, no `b0 agent add`. Even if the user says "find 3 agents" or "use multiple agents", create 3 temp agents with `b0 agent temp`.
+**Always use `b0 delegate` with an existing agent or create one with `b0 agent add`.** There are no one-off temp agents. Use `b0 agent ls` to see what is available.
 
-**Only use `b0 agent add` when:**
-- The user explicitly says "create a permanent agent" or "add an agent that I can reuse"
-- Never for one-off tasks, debates, research, reviews, or any task that will be done today
+**Use `b0 agent add` when:**
+- No existing agent matches the task
+- The user wants a named agent for future reuse
 
-**Only use `b0 delegate <name>` when:**
+**Use `b0 delegate <name>` when:**
 - `b0 agent ls` shows an existing agent that matches the task
 - The user mentions an agent by name ("ask the reviewer")
 
@@ -125,6 +107,8 @@ When the user's request could benefit from specialized agents or parallel execut
 
 ```bash
 b0 agent ls                                           # list available agents
+b0 agent add <name> --instructions "..."               # create a named agent
+b0 agent remove <name>                                 # delete an agent
 b0 delegate <agent> "<detailed task prompt>"          # send task (non-blocking)
 b0 delegate --thread <id> <agent> "<follow-up>"       # continue conversation
 b0 wait                                                # wait for next completed result
@@ -132,13 +116,13 @@ b0 wait --all                                          # wait for all pending re
 b0 wait --timeout 0                                    # non-blocking check for completed results
 b0 reply <thread-id> "<answer>"                        # answer an agent's question
 b0 status                                              # check pending tasks
-b0 agent temp "<task>"                                 # one-off task, no named agent
-b0 agent add <name> --instructions "..."               # create a named agent
-b0 agent remove <name>                                 # delete an agent
-b0 cron add --every <interval> "<task>"                # schedule recurring task (auto-creates temp agent)
+b0 cron add --every <interval> "<task>"                # schedule recurring task
 b0 cron add --agent <name> --every <interval> "<task>" # schedule with existing agent
 b0 cron ls                                             # list scheduled tasks
 b0 cron remove <id>                                    # remove a scheduled task
+b0 webhook add <agent>                                 # add webhook trigger to agent
+b0 webhook ls <agent>                                  # list webhook triggers for agent
+b0 webhook rm <id>                                     # remove a webhook trigger
 ```
 
 ## How to write delegation prompts
@@ -204,6 +188,28 @@ If an agent fails, `b0 wait` reports it. Decide whether to:
 - Handle the task yourself
 - Report the failure to the user
 
+## Webhook triggers
+
+Background agents can be triggered by external HTTP requests. Create a webhook for an agent:
+
+```bash
+b0 webhook add monitor
+```
+
+This returns a URL. Any HTTP POST to that URL will trigger the agent with the request body as the task prompt.
+
+List webhooks for an agent:
+
+```bash
+b0 webhook ls monitor
+```
+
+Remove a webhook:
+
+```bash
+b0 webhook rm <id>
+```
+
 ## Multi-turn conversations
 
 To continue a conversation with an agent, pass the thread ID from the first round:
@@ -223,5 +229,4 @@ The agent remembers all previous turns.
 | `b0 status` shows no connection | Start the server with `b0 server` |
 | `b0 delegate` hangs | Check that the daemon is running (it starts with the server) |
 | Agent returns empty result | Check agent instructions with `b0 agent info <name>` |
-| "no local machine" error | Run `b0 machine join <url> --name <hostname> --key <key>` to register this machine |
 | Timeout errors | Default is 300s. Check if the task needs more time. |

@@ -20,7 +20,7 @@ b0 admin ensure --name <name> --key <key> Create/update a local admin user
 ## Agents
 
 ```
-b0 agent add <name> --instructions "..." [--description "..."] [--workspace <w>] [--machine <m>] [--runtime auto|claude|codex] [--webhook <url>] [--slack <channel>]
+b0 agent add <name> --instructions "..." [--description "..."] [--workspace <w>] [--runtime auto|claude|codex] [--webhook <url>] [--slack <channel>]
 b0 agent ls [--workspace <w>]
 b0 agent info <name> [--workspace <w>]
 b0 agent update <name> --instructions "..." [--workspace <w>]
@@ -28,7 +28,6 @@ b0 agent stop <name> [--workspace <w>]
 b0 agent start <name> [--workspace <w>]
 b0 agent logs <name> [--workspace <w>]
 b0 agent remove <name> [--workspace <w>]
-b0 agent temp "<task>" [--workspace <w>]   One-off task (non-blocking, auto-cleanup)
 ```
 
 ## Task delegation
@@ -65,12 +64,15 @@ Intervals: `30s`, `5m`, `1h`, `6h`, `1d`. Optional end date: `2026-04-24` or `20
 
 If `--agent` is omitted, a temporary agent is auto-created and cleaned up when the cron job is removed.
 
-## Machines
+## Webhook triggers
 
 ```
-b0 machine join <url> [--name <id>] [--key <key>]    Join as remote machine
-b0 machine ls                                         List machines
+b0 webhook add <agent> [--workspace <w>]             Add webhook trigger to agent
+b0 webhook ls <agent> [--workspace <w>]              List webhook triggers for agent
+b0 webhook rm <id> [--workspace <w>]                 Remove webhook trigger
 ```
+
+An HTTP POST to the returned webhook URL triggers the agent with the request body as the task prompt.
 
 ## Workspaces
 

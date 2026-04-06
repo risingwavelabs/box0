@@ -28,9 +28,8 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
 
 ## Resource model
 
-- **Machines** belong to the server, not to workspaces. They are physical compute resources shared across all workspaces. Any workspace's agent can be assigned to any machine. `b0 server` auto-creates a `local` machine. Other machines join via `b0 machine join`.
-- **Workspaces** are logical groups for organizing agents, tasks, and team access. They do not own machines.
-- **Agents** belong to a workspace and are assigned to a machine. Workspace controls visibility. Machine controls where the agent runs.
+- **Workspaces** are logical groups for organizing agents, tasks, and team access.
+- **Agents** belong to a workspace. Workspace controls visibility.
 
 ## Auth model
 
@@ -56,22 +55,16 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
 - Multi-turn: `b0 delegate --thread <id>` sends "answer" message, daemon resumes Claude session.
 - Windows compatibility: runtime detection uses `where` instead of `which`.
 - On completion, webhooks are fired and Slack notifications sent if configured on the agent.
-
-## Multi-machine
-
-- Server must bind to `0.0.0.0` for remote access (not the default `127.0.0.1`).
-- Remote machines join via `b0 machine join <url> --name <name> --key <key>`.
-- Remote daemon long-polls server at `/machines/{id}/poll` (up to 30s timeout).
-- Each machine runs its own daemon that processes tasks and spawns the local runtime.
-- Agents use the machine's local Claude/Codex authentication. No credential forwarding.
+- Background agents support three trigger types: Manual (`b0 delegate`), Cron (`b0 cron add`), Webhook (`b0 webhook add`).
+- Agent kinds: `background` (persistent, triggered on demand) and `cron` (scheduled, auto-created by `b0 cron add`).
 
 ## CLI design
 
 - `--workspace` is optional when `default_workspace` is set in config.
 - `b0 server` on first start auto-configures `~/.b0/config.toml` (server_url, api_key, default_workspace).
 - `b0 login` on remote machines auto-sets default_workspace from user's first workspace.
-- `b0 agent temp` is non-blocking (same as `b0 delegate`). Temp agents auto-cleanup on `b0 wait`.
 - `b0 delegate` without `--thread` creates new conversation. With `--thread` continues existing one.
+- `b0 webhook add/ls/rm` manage webhook triggers on background agents.
 - Skills are installed via `npx skills add risingwavelabs/skills --skill b0`, not via the b0 CLI.
 - Claude Code skill lives at `~/.claude/skills/b0/SKILL.md` (directory format, not plain file).
 - Codex skill lives in `~/.codex/AGENTS.md`.
@@ -90,7 +83,7 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
 - Users interact with Box0 via Tasks. Agents are invisible infrastructure.
 - Each task has: title, status (running/needs_input/done/failed), conversation thread, optional sub-tasks, result.
 - Web UI: left panel = chat, right panel = task board grouped by status.
-- Creating a task via Web UI auto-creates a temp agent to handle it.
+- Creating a task via Web UI auto-creates a background agent to handle it.
 - Two paths: CLI (`b0 delegate`) and Web UI (Task API). Both converge on the same inbox/daemon layer.
 - Task status auto-updates when inbox messages of type "done", "failed", or "question" arrive on the task's thread.
 - Agent timeout is configurable per-agent (default 300s).

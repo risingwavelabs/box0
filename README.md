@@ -34,7 +34,6 @@ Box0 runs multiple AI agents in parallel across your machines. You create agents
 |               | Box0                              | Subagents              |
 |:-------------:|:---------------------------------:|:----------------------:|
 | Setup         | `npm install`, one binary         | Built-in, zero config  |
-| Multi-machine | One laptop or a fleet of machines | Single machine only    |
 | Persistence   | Agents and conversations persist  | Session only           |
 | Scheduling    | Cron jobs                         | :x:                    |
 | Notifications | Webhooks, Slack, and more         | :x:                    |
@@ -48,15 +47,12 @@ Box0 runs multiple AI agents in parallel across your machines. You create agents
 
 A **server** coordinates everything. It stores agent definitions, routes tasks, runs the scheduler, and serves a web dashboard. Start one with `b0 server`.
 
-**Machines** are computers that run agents. When the server starts, it registers itself as the `local` machine. Add more with `b0 machine join`. Each machine uses its own Claude Code or Codex credentials. Machines belong to the server and are shared across all workspaces.
-
 **Workspaces** organize agents by team. Each user gets a personal workspace. Create shared ones with `b0 workspace create` and invite members. Agents in a workspace are visible to all its members.
 
-**Agents** do the actual work. Each agent has a name, a set of instructions, and runs on a specific machine. There are three kinds:
+**Agents** do the actual work. Each agent has a name, a set of instructions, and a set of triggers. There are two kinds:
 
-- **background** - persistent agents that stay around and handle tasks on demand. Created with `b0 agent add`.
-- **cron** - run on a schedule. Created with `b0 cron add --every 6h "..."`.
-- **temp** - one-off tasks that clean up after themselves. Created with `b0 agent temp "..."`.
+- **background** - persistent agents that handle tasks on demand. Created with `b0 agent add`. Triggered manually via `b0 delegate`, on a schedule via `b0 cron add`, or by an HTTP webhook via `b0 webhook add`.
+- **cron** - run on a schedule. Auto-created by `b0 cron add --every 6h "..."`.
 
 Your AI (Claude Code or Codex) delegates work with `b0 delegate`, waits for results with `b0 wait`, and can run multiple agents in parallel. You type one prompt. Your agent handles the rest.
 
@@ -70,7 +66,7 @@ Or read [SKILL.md](SKILL.md) directly.
 
 Your agent sends tasks to the Box0 server via `b0 delegate`. The server stores them in an inbox. A node daemon polls the inbox, spawns a separate Claude Code (or Codex) process for each worker, and writes the results back. Your agent calls `b0 wait` to collect the responses.
 
-Each worker runs in its own isolated directory. Workers can also run across multiple machines. See [Multi-machine](docs/multi-machine.md).
+Each worker runs in its own isolated directory.
 
 Agent runs use a 30 minute default execution timeout. This prevents longer workflow steps from failing at the old 5 minute default on first run.
 ## Getting started
@@ -184,17 +180,11 @@ git diff | b0 delegate reviewer "Review this diff."
 b0 delegate analyst "Summarize this codebase. @src/"
 ```
 
-**Temp agents.** One-off tasks, no setup.
+**Webhook triggers.** Trigger agents via HTTP webhook.
 
 ```bash
-b0 agent temp "List the top 5 differences between Rust and Go."
-```
-
-**Multi-machine.** Distribute agents across machines. Each machine uses its own credentials.
-
-```bash
-b0 machine join http://server:8080 --name gpu-box --key <key>
-b0 agent add ml-agent --instructions "ML specialist." --machine gpu-box
+b0 webhook add monitor
+b0 webhook ls monitor
 ```
 
 **Web dashboard.** Manage agents, view tasks, and monitor machines at `http://localhost:8080`.
@@ -217,7 +207,6 @@ b0 agent logs <name>                         View recent task history
 b0 agent stop <name>                         Deactivate agent
 b0 agent start <name>                        Reactivate agent
 b0 agent remove <name>                       Delete agent
-b0 agent temp "<task>"                       One-off task (auto-cleanup)
 ```
 
 ```
@@ -235,8 +224,9 @@ b0 cron remove <id>                          Delete scheduled task
 ```
 
 ```
-b0 machine join <url> --name <id>            Join as remote machine
-b0 machine ls                                List machines
+b0 webhook add <agent>                       Add webhook trigger to agent
+b0 webhook ls <agent>                        List webhook triggers for agent
+b0 webhook rm <id>                           Remove webhook trigger
 ```
 
 ```
@@ -247,7 +237,6 @@ b0 workspace add-member <ws> <user-id>       Add member
 ## Learn more
 
 - [Skills](docs/skills.md) - how skills teach your agent to use Box0
-- [Multi-machine setup](docs/multi-machine.md) - distribute agents across machines
 - [Cron jobs](docs/cron.md) - schedule recurring tasks
 - [Slack notifications](docs/slack.md) - get notified when agents finish
 - [Workspaces](docs/teams.md) - share a Box0 server with multiple users
