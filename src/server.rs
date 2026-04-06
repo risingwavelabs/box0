@@ -1,6 +1,6 @@
 use axum::{
     Extension, Router,
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Json},
@@ -34,6 +34,7 @@ pub struct AppState {
     /// Notifies the local daemon when new inbox messages arrive.
     pub inbox_notify: tokio::sync::Notify,
     pub slack_token: Option<String>,
+    pub admin_key: String,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -277,6 +278,16 @@ async fn health_handler() -> Json<serde_json::Value> {
         "status": "healthy",
         "version": env!("CARGO_PKG_VERSION")
     }))
+}
+
+async fn config_handler(
+    State(state): State<SharedState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+) -> impl IntoResponse {
+    if !addr.ip().is_loopback() {
+        return error_response(StatusCode::FORBIDDEN, "not available remotely");
+    }
+    (StatusCode::OK, Json(serde_json::json!({ "api_key": state.admin_key }))).into_response()
 }
 
 fn json_content_as_text(content: Option<&serde_json::Value>) -> Option<String> {
@@ -2019,6 +2030,7 @@ fn error_response(status: StatusCode, message: &str) -> axum::response::Response
 pub fn build_router(state: SharedState) -> Router {
     let public = Router::new()
         .route("/health", get(health_handler))
+        .route("/api/config", get(config_handler))
         .route("/trigger/{workspace}/{agent}", post(trigger_agent_handler));
 
     let protected = Router::new()
@@ -2350,10 +2362,13 @@ pub async fn run(config: ServerConfig, no_local: bool) {
             .map(|(k, n, i)| (k.as_str(), n.as_str(), i.as_str())),
     );
 
+    let admin_key = db.get_admin_key().unwrap_or(None).unwrap_or_default();
+
     let state = Arc::new(AppState {
         db,
         inbox_notify: tokio::sync::Notify::new(),
         slack_token: config.slack_token.clone(),
+        admin_key,
     });
 
     // Spawn daemon for "local" machine
@@ -2390,10 +2405,13 @@ pub async fn run(config: ServerConfig, no_local: bool) {
         }
     };
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .expect("server error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .expect("server error");
 }
 
 async fn shutdown_signal() {

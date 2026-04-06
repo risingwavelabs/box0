@@ -21,6 +21,7 @@ async fn start_test_server() -> (String, String, TempDir) {
         db,
         inbox_notify: tokio::sync::Notify::new(),
         slack_token: None,
+        admin_key: admin_key.clone(),
     });
     let app = box0::server::build_router(state);
 
@@ -29,7 +30,12 @@ async fn start_test_server() -> (String, String, TempDir) {
     let base_url = format!("http://127.0.0.1:{}", addr.port());
 
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
 
     (base_url, admin_key, tmp)

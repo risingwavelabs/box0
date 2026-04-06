@@ -537,6 +537,17 @@ impl Database {
         .map_err(Into::into)
     }
 
+    pub fn get_admin_key(&self) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT key FROM users WHERE is_admin = 1 LIMIT 1",
+        )?;
+        let key = stmt
+            .query_row([], |row| row.get::<_, String>(0))
+            .optional()?;
+        Ok(key)
+    }
+
     pub fn list_users(&self) -> Result<Vec<User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
