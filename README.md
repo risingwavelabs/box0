@@ -17,11 +17,11 @@ __Open-Source Platform for Subagents and Agent Teams.__
 
 </div>
 
-Box0 runs multiple AI agents in parallel across your machines. You create agents with different roles, delegate tasks to them, and collect results. It works with Claude Code and Codex. Single Rust binary, no dependencies.
+Box0 runs multiple AI agents in parallel. You create agents with different roles, trigger them on demand or on a schedule, and collect results. It works with Claude Code and Codex. Single Rust binary, no dependencies.
 
   - **Long-running**: agents that persist across sessions and never disappear
-  - **Collaborative**: shared across machines and team members
-  - **Proactive**: cron jobs, webhooks, Slack notifications
+  - **Collaborative**: shared across team members
+  - **Proactive**: cron schedules, webhooks, Slack notifications
 
 <p align="center">
   <img src="docs/hero.svg" alt="Box0 Architecture" width="800">
@@ -45,16 +45,17 @@ Box0 runs multiple AI agents in parallel across your machines. You create agents
 
 ## How it works
 
-A **server** coordinates everything. It stores agent definitions, routes tasks, runs the scheduler, and serves a web dashboard. Start one with `b0 server`.
+A **server** coordinates everything. It stores agent definitions, routes tasks, runs the scheduler, and serves a web dashboard. Start one with `b0 server` (runs in background).
 
-**Workspaces** organize agents by team. Each user gets a personal workspace. Create shared ones with `b0 workspace create` and invite members. Agents in a workspace are visible to all its members.
+**Workspaces** organize agents by team. Each user gets a personal workspace.
 
-**Agents** do the actual work. Each agent has a name, a set of instructions, and a set of triggers. There are two kinds:
+**Agents** do the actual work. Each agent has a name, a set of instructions, and a set of triggers. Three trigger types:
 
-- **background** - persistent agents that handle tasks on demand. Created with `b0 agent add`. Triggered manually via `b0 delegate`, on a schedule via `b0 cron add`, or by an HTTP webhook via `b0 webhook add`.
-- **cron** - run on a schedule. Auto-created by `b0 cron add --every 6h "..."`.
+- **Manual** - trigger on demand with `b0 run <name> "<task>"`.
+- **Cron** - run on a schedule. Set with `b0 add --every 1h --task "..."`.
+- **Webhook** - triggered by HTTP POST. Enable with `b0 add --webhook`.
 
-Your AI (Claude Code or Codex) delegates work with `b0 delegate`, waits for results with `b0 wait`, and can run multiple agents in parallel. You type one prompt. Your agent handles the rest.
+Your AI (Claude Code or Codex) creates agents with `b0 add`, runs tasks with `b0 run`, and can run multiple agents in parallel. You type one prompt. Your agent handles the rest.
 
 ## Agent onboarding
 
@@ -64,7 +65,7 @@ npx skills add risingwavelabs/skills --skill b0
 
 Or read [SKILL.md](SKILL.md) directly.
 
-Your agent sends tasks to the Box0 server via `b0 delegate`. The server stores them in an inbox. A node daemon polls the inbox, spawns a separate Claude Code (or Codex) process for each worker, and writes the results back. Your agent calls `b0 wait` to collect the responses.
+Your agent creates workers with `b0 add` and sends tasks via `b0 run`. The server stores tasks in an inbox. A daemon polls the inbox, spawns a separate Claude Code (or Codex) process for each worker, and writes the results back. `b0 run` blocks until the result is ready.
 
 Each worker runs in its own isolated directory.
 
@@ -142,96 +143,67 @@ Then open Claude Code or Codex and say:
 
 ## Features
 
-**Parallel delegation.** Send tasks to multiple agents at once, collect results when they are done.
+**Parallel execution.** Run multiple agents at once.
 
 ```bash
-b0 delegate reviewer "Review this PR for correctness."
-b0 delegate security "Review this PR for vulnerabilities."
-b0 wait --all
+b0 run reviewer "Review this PR for correctness." &
+b0 run security "Review this PR for vulnerabilities." &
+wait
 ```
 
-**Cron jobs.** Schedule recurring tasks.
+**Cron schedules.** Schedule recurring tasks.
 
 ```bash
-b0 cron add --every 6h "Check production logs for errors and summarize."
+b0 add monitor --instructions "Check production logs for errors." --every 6h --task "scan logs"
 ```
 
-**Webhooks and Slack.** Get notified when agents finish.
+**Webhook triggers.** Trigger agents via HTTP POST.
 
 ```bash
-b0 agent add monitor --instructions "Watch for regressions." --webhook https://example.com/hook
-b0 agent add alerter --instructions "Triage alerts." --slack "#ops"
+b0 add notifier --instructions "Process alerts." --webhook
+b0 info notifier
+```
+
+**Slack notifications.** Get notified when agents finish.
+
+```bash
+b0 add alerter --instructions "Triage alerts." --slack "#ops"
 ```
 
 See [Slack setup](docs/slack.md) for configuration.
 
-**Multi-turn conversations.** Continue where you left off.
-
-```bash
-THREAD=$(b0 delegate researcher "Compare Postgres and MySQL for our use case.")
-b0 wait
-b0 delegate --thread $THREAD researcher "Now factor in DynamoDB."
-```
-
 **Pipe content.** Pass files and diffs directly.
 
 ```bash
-git diff | b0 delegate reviewer "Review this diff."
-b0 delegate analyst "Summarize this codebase. @src/"
+git diff | b0 run reviewer "Review this diff."
 ```
 
-**Webhook triggers.** Trigger agents via HTTP webhook.
-
-```bash
-b0 webhook add monitor
-b0 webhook ls monitor
-```
-
-**Web dashboard.** Manage agents, view tasks, and monitor machines at `http://localhost:8080`.
+**Web dashboard.** Manage agents and view tasks at `http://localhost:8080`.
 
 ## CLI reference
 
 ```
-b0 server                                    Start server
-b0 login <url> --key <key>                   Connect from another machine
-b0 status                                    Show connection info
-b0 invite <name>                             Create user (admin only)
-b0 admin ensure --name <name> --key <key>    Create/update a local admin user
+b0 server                                              Start server (background)
+b0 server stop                                         Stop server
+b0 server status                                       Show server status
+b0 admin ensure --name <name> --key <key>              Create/update a local admin user
 ```
 
 ```
-b0 agent add <name> --instructions "..."     Create agent
-b0 agent ls                                  List agents
-b0 agent info <name>                         View agent details
-b0 agent logs <name>                         View recent task history
-b0 agent stop <name>                         Deactivate agent
-b0 agent start <name>                        Reactivate agent
-b0 agent remove <name>                       Delete agent
+b0 add <name> --instructions "..."                     Create agent
+b0 add <name> --instructions "..." --every 1h --task "..." Create scheduled agent
+b0 add <name> --instructions "..." --webhook           Create agent with trigger URL
+b0 add <name> --instructions "..." --webhook-secret s  Create agent with HMAC secret
+b0 ls                                                  List agents
+b0 info <name>                                         View agent details and trigger URL
+b0 logs <name>                                         View recent task history
+b0 update <name> --instructions "..."                  Update agent instructions
+b0 rm <name>                                           Delete agent
 ```
 
 ```
-b0 delegate <agent> "<task>"                 Send task (non-blocking)
-b0 delegate --thread <id> <agent> "<msg>"    Continue conversation
-b0 wait [--all] [--timeout <sec>]            Collect results
-b0 reply <thread-id> "<answer>"              Answer agent question
-b0 threads                                   List recent conversations
-```
-
-```
-b0 cron add --every <interval> "<task>"      Schedule recurring task
-b0 cron ls                                   List scheduled tasks
-b0 cron remove <id>                          Delete scheduled task
-```
-
-```
-b0 webhook add <agent>                       Add webhook trigger to agent
-b0 webhook ls <agent>                        List webhook triggers for agent
-b0 webhook rm <id>                           Remove webhook trigger
-```
-
-```
-b0 workspace create <name>                   Create workspace
-b0 workspace add-member <ws> <user-id>       Add member
+b0 run <agent> "<task>"                                Trigger agent and wait for result
+b0 run <agent> "<task>" --timeout 600                  Trigger with custom timeout (seconds)
 ```
 
 ## Learn more

@@ -51,21 +51,21 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
   - Codex: `codex exec --json --full-auto --skip-git-repo-check [-C <dir>] "<instructions>\n\n<task>"`, task as argument.
   - Codex output is JSONL. Parse `item.completed` events, extract `item.text`.
   - Codex requires `--skip-git-repo-check` because agent directories are not git repos.
-- Session IDs are tracked per thread for multi-turn conversations (`--resume`, Claude only). Codex does not support session resume.
-- Multi-turn: `b0 delegate --thread <id>` sends "answer" message, daemon resumes Claude session.
 - Windows compatibility: runtime detection uses `where` instead of `which`.
 - On completion, webhooks are fired and Slack notifications sent if configured on the agent.
-- Background agents support three trigger types: Manual (`b0 delegate`), Cron (`b0 cron add`), Webhook (POST `/trigger/<workspace>/<agent>`).
 - Every agent has a deterministic trigger URL: `POST /trigger/<workspace>/<agent-name>` (no auth required). Optional HMAC secret stored as `webhook_secret` on the agent.
-- Agent kinds: `background` (persistent, triggered on demand) and `cron` (scheduled, auto-created by `b0 cron add`).
+- Agents support three trigger types: Manual (`b0 run`), Cron (`b0 add --every`), Webhook (POST `/trigger/<workspace>/<agent>`).
 
 ## CLI design
 
-- `--workspace` is optional when `default_workspace` is set in config.
-- `b0 server` on first start auto-configures `~/.b0/config.toml` (server_url, api_key, default_workspace).
-- `b0 login` on remote machines auto-sets default_workspace from user's first workspace.
-- `b0 delegate` without `--thread` creates new conversation. With `--thread` continues existing one.
-- `b0 agent add --webhook-secret <secret>` sets an HMAC secret for the agent's trigger URL. Trigger URL is printed on registration and visible in `b0 agent info`.
+- `b0 server` runs in background (PID file at `~/.b0/server.pid`, logs at `~/.b0/server.log`). `b0 server stop` terminates it. `b0 server status` shows running state.
+- `b0 add <name> --instructions "..."` creates a background agent. Optional flags: `--every <interval> --task "..."` for scheduled runs; `--webhook` to enable trigger URL; `--webhook-secret <secret>` for HMAC verification.
+- `b0 ls` lists agents with TRIGGERS column (shows "every X", "webhook", or "-").
+- `b0 info <name>` shows agent details including trigger URL and schedule.
+- `b0 update <name> --instructions "..."` updates agent instructions.
+- `b0 rm <name>` deletes agent and its associated cron jobs.
+- `b0 run <name> <task> [--timeout 300]` triggers agent synchronously and waits for result.
+- `b0 logs <name>` shows agent inbox messages.
 - Skills are installed via `npx skills add risingwavelabs/skills --skill b0`, not via the b0 CLI.
 - Claude Code skill lives at `~/.claude/skills/b0/SKILL.md` (directory format, not plain file).
 - Codex skill lives in `~/.codex/AGENTS.md`.
@@ -85,7 +85,7 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
 - Each task has: title, status (running/needs_input/done/failed), conversation thread, optional sub-tasks, result.
 - Web UI: left panel = chat, right panel = task board grouped by status.
 - Creating a task via Web UI auto-creates a background agent to handle it.
-- Two paths: CLI (`b0 delegate`) and Web UI (Task API). Both converge on the same inbox/daemon layer.
+- Two paths: CLI (`b0 run`) and Web UI (Task API). Both converge on the same inbox/daemon layer.
 - Task status auto-updates when inbox messages of type "done", "failed", or "question" arrive on the task's thread.
 - Agent timeout is configurable per-agent (default 300s).
 

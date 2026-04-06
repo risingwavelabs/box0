@@ -13,7 +13,7 @@ allowed-tools:
 
 # Box0 (`b0`) Multi-Agent Platform
 
-Run AI agents in parallel. Delegate tasks, collect results, schedule cron jobs, trigger agents via deterministic webhook URLs.
+Run AI agents in parallel. Create agents with roles, trigger them on demand or on a schedule, and collect results.
 
 ## Setup
 
@@ -42,16 +42,12 @@ export PATH="$PWD/target/release:$PATH"
 ### Step 3: Check if server is running
 
 ```bash
-b0 status
+b0 server status
 ```
 
-If this shows "Status: connected", skip to Step 5.
+If this shows "Server is running", skip to Step 5.
 
-### Step 4: Connect to a server
-
-**Option A: Start a local server (self-hosted)**
-
-Run in a separate terminal or background process:
+### Step 4: Start the server
 
 ```bash
 b0 server
@@ -59,26 +55,16 @@ b0 server
 
 On first start, Box0 creates an admin account and auto-configures `~/.b0/config.toml`.
 
-**Option B: Connect to a remote server (cloud/team)**
-
-If the user already has a remote Box0 server, log in instead of starting a local one:
-
-```bash
-b0 login <server-url> --key <api-key>
-```
-
-The user must provide the server URL and API key. After login, continue to Step 5.
-
 ### Step 5: Install the skill
 
 ```bash
 npx skills add risingwavelabs/skills --skill b0
 ```
 
-### Step 7: Verify
+### Step 6: Verify
 
 ```bash
-b0 agent ls
+b0 ls
 ```
 
 This should run without errors. Setup is complete.
@@ -93,48 +79,44 @@ When the user's request could benefit from specialized agents or parallel execut
 
 ## Choosing an agent
 
-**Always use `b0 delegate` with an existing agent or create one with `b0 agent add`.** There are no one-off temp agents. Use `b0 agent ls` to see what is available.
+**Always use `b0 run` with an existing agent or create one with `b0 add`.** Use `b0 ls` to see what is available.
 
-**Use `b0 agent add` when:**
+**Use `b0 add` when:**
 - No existing agent matches the task
 - The user wants a named agent for future reuse
 
-**Use `b0 delegate <name>` when:**
-- `b0 agent ls` shows an existing agent that matches the task
+**Use `b0 run <name>` when:**
+- `b0 ls` shows an existing agent that matches the task
 - The user mentions an agent by name ("ask the reviewer")
 
 ## Commands
 
 ```bash
-b0 agent ls                                           # list available agents
-b0 agent add <name> --instructions "..."               # create a named agent
-b0 agent remove <name>                                 # delete an agent
-b0 delegate <agent> "<detailed task prompt>"          # send task (non-blocking)
-b0 delegate --thread <id> <agent> "<follow-up>"       # continue conversation
-b0 wait                                                # wait for next completed result
-b0 wait --all                                          # wait for all pending results
-b0 wait --timeout 0                                    # non-blocking check for completed results
-b0 reply <thread-id> "<answer>"                        # answer an agent's question
-b0 status                                              # check pending tasks
-b0 cron add --every <interval> "<task>"                # schedule recurring task
-b0 cron add --agent <name> --every <interval> "<task>" # schedule with existing agent
-b0 cron ls                                             # list scheduled tasks
-b0 cron remove <id>                                    # remove a scheduled task
-b0 agent info <name>                                   # show agent info including trigger URL
+b0 ls                                                  # list available agents
+b0 add <name> --instructions "..."                     # create a named agent
+b0 add <name> --instructions "..." --every 1h --task "..." # create scheduled agent
+b0 add <name> --instructions "..." --webhook           # create agent with trigger URL
+b0 add <name> --instructions "..." --webhook-secret s  # create agent with HMAC secret
+b0 rm <name>                                           # delete an agent
+b0 run <agent> "<detailed task prompt>"                # trigger agent and wait for result
+b0 run <agent> "<task>" --timeout 600                  # trigger with custom timeout
+b0 info <name>                                         # show agent info including trigger URL
+b0 logs <name>                                         # show recent agent logs
+b0 update <name> --instructions "..."                  # update agent instructions
 ```
 
-## How to write delegation prompts
+## How to write task prompts
 
 This is critical. Do NOT forward the user's words. Compose a complete, actionable prompt.
 
 Bad:
 ```
-b0 delegate reviewer "review this PR"
+b0 run reviewer "review this PR"
 ```
 
 Good:
 ```
-b0 delegate reviewer "Review the changes on branch feature-timeout in this repo.
+b0 run reviewer "Review the changes on branch feature-timeout in this repo.
 The PR adds timeout handling to src/handler.rs.
 Focus on correctness, edge cases, and error handling.
 Cite line numbers for any issues found."
@@ -147,86 +129,69 @@ Steps:
 
 For large content (diffs, file contents), pipe via stdin:
 ```
-git diff main..HEAD | b0 delegate reviewer "Review the following diff. Focus on correctness."
+git diff main..HEAD | b0 run reviewer "Review the following diff. Focus on correctness."
 ```
 
 ## Concurrent tasks
 
-Delegate to multiple agents, then collect all results:
+Run multiple agents in parallel:
 
 ```bash
-b0 delegate reviewer "Review the changes on branch feature-timeout..."
-b0 delegate security "Check src/handler.rs for OWASP top 10 vulnerabilities..."
-b0 delegate doc-writer "Update README to reflect the new timeout config option..."
-b0 wait --all
+b0 run reviewer "Review the changes on branch feature-timeout..." &
+b0 run security "Check src/handler.rs for OWASP top 10 vulnerabilities..." &
+b0 run doc-writer "Update README to reflect the new timeout config option..." &
+wait
 ```
 
-All three run in parallel. `b0 wait --all` blocks until all complete.
+Each `b0 run` call blocks until its agent completes. Run them in the background with `&` to parallelize.
 
-## Handling agent questions
+## Scheduled agents
 
-During `b0 wait`, an agent may ask a question:
+Create an agent that runs automatically on a schedule:
 
+```bash
+b0 add monitor --instructions "Check logs for errors." --every 1h --task "scan logs"
 ```
-reviewer asks (thread thread-abc): "Is the timeout change on line 42 intentional?"
-  -> Use: b0 reply thread-abc "<your answer>"
-```
 
-Answer with `b0 reply`, then run `b0 wait` again to continue collecting results.
-
-## Proactive status checks
-
-Before responding to a new user message, run `b0 status` to check if any previously delegated tasks have completed. Report results to the user if any are ready.
-
-## Error handling
-
-If an agent fails, `b0 wait` reports it. Decide whether to:
-- Retry with a clearer prompt
-- Try a different agent
-- Handle the task yourself
-- Report the failure to the user
+Intervals: `30s`, `5m`, `1h`, `6h`, `1d`.
 
 ## Webhook triggers
 
-Every background agent automatically has a trigger URL based on its name. No setup required.
+Every agent with `--webhook` has a trigger URL. Any HTTP POST to that URL runs the agent.
 
 ```bash
-b0 agent add --name monitor --instructions "Monitor the system."
+b0 add notifier --instructions "Process incoming alerts." --webhook
 ```
 
-This prints the trigger URL: `<server>/trigger/<workspace>/<agent-name>`. Any HTTP POST to that URL will trigger the agent with the request body as the task prompt.
+This prints the trigger URL: `<server>/trigger/<workspace>/<agent-name>`.
 
 To see the trigger URL for an existing agent:
 
 ```bash
-b0 agent info monitor
+b0 info notifier
 ```
 
-To add HMAC signature verification, set a secret when creating the agent:
+To add HMAC signature verification:
 
 ```bash
-b0 agent add --name monitor --instructions "Monitor." --webhook-secret mysecret
+b0 add notifier --instructions "Process alerts." --webhook --webhook-secret mysecret
 ```
 
 Then sign requests with `X-Hub-Signature-256: sha256=<hmac-sha256-of-body>`.
 
-## Multi-turn conversations
+## Error handling
 
-To continue a conversation with an agent, pass the thread ID from the first round:
-
-```bash
-b0 delegate --thread <thread-id> <agent> "<follow-up>"
-b0 wait
-```
-
-The agent remembers all previous turns.
+If an agent fails, `b0 run` reports the error. Decide whether to:
+- Retry with a clearer prompt
+- Try a different agent
+- Handle the task yourself
+- Report the failure to the user
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
 | `b0: command not found` | Run `npm install -g @box0/cli@latest` |
-| `b0 status` shows no connection | Start the server with `b0 server` |
-| `b0 delegate` hangs | Check that the daemon is running (it starts with the server) |
-| Agent returns empty result | Check agent instructions with `b0 agent info <name>` |
-| Timeout errors | Default is 300s. Check if the task needs more time. |
+| `b0 server status` shows not running | Run `b0 server` |
+| `b0 run` times out | Increase timeout with `--timeout 600` |
+| Agent returns empty result | Check agent instructions with `b0 info <name>` |
