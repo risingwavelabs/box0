@@ -4,6 +4,7 @@ use box0::{
     scheduler,
 };
 use clap::{Parser, Subcommand};
+use libc;
 
 #[derive(Parser)]
 #[command(name = "b0", about = "Box0 agent platform", version)]
@@ -270,27 +271,134 @@ async fn main() {
     }
 }
 
-// --- Server stubs (implemented in Task 4) ---
+// --- Server daemon helpers ---
+
+fn server_pid_path() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".b0")
+        .join("server.pid")
+}
+
+fn server_log_path() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".b0")
+        .join("server.log")
+}
+
+fn read_server_pid() -> Option<u32> {
+    std::fs::read_to_string(server_pid_path())
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+fn is_pid_running(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
+}
 
 fn cmd_server_start(
-    _config: Option<String>,
-    _host: Option<String>,
-    _port: Option<u16>,
-    _db: Option<String>,
-    _no_local: bool,
+    config: Option<String>,
+    host: Option<String>,
+    port: Option<u16>,
+    db: Option<String>,
+    no_local: bool,
 ) {
-    eprintln!("Server start not yet implemented.");
-    std::process::exit(1);
+    // Check if already running
+    if let Some(pid) = read_server_pid() {
+        if is_pid_running(pid) {
+            eprintln!("Server is already running (pid {}).", pid);
+            eprintln!("Stop it with: b0 server stop");
+            std::process::exit(1);
+        }
+        std::fs::remove_file(server_pid_path()).ok();
+    }
+
+    let exe = std::env::current_exe().expect("failed to locate executable");
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("server").arg("--foreground");
+    if let Some(h) = host { cmd.arg("--host").arg(h); }
+    if let Some(p) = port { cmd.arg("--port").arg(p.to_string()); }
+    if let Some(d) = db { cmd.arg("--db").arg(d); }
+    if let Some(c) = config { cmd.arg("--config").arg(c); }
+    if no_local { cmd.arg("--no-local"); }
+
+    let log_path = server_log_path();
+    let _ = std::fs::create_dir_all(log_path.parent().unwrap());
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .expect("failed to open server log file");
+    cmd.stdout(log_file.try_clone().unwrap());
+    cmd.stderr(log_file);
+
+    let child = cmd.spawn().expect("failed to start server process");
+    let pid = child.id();
+    std::mem::forget(child); // detach: do not wait for child
+
+    let pid_file = server_pid_path();
+    let _ = std::fs::create_dir_all(pid_file.parent().unwrap());
+    std::fs::write(&pid_file, pid.to_string())
+        .expect("failed to write pid file");
+
+    println!("Server started (pid {}).", pid);
+    println!("Logs:   {}", log_path.display());
+    println!("Stop:   b0 server stop");
 }
 
 fn cmd_server_stop() {
-    eprintln!("Server stop not yet implemented.");
-    std::process::exit(1);
+    match read_server_pid() {
+        None => println!("Server is not running."),
+        Some(pid) => {
+            if !is_pid_running(pid) {
+                std::fs::remove_file(server_pid_path()).ok();
+                println!("Server is not running (stale pid removed).");
+                return;
+            }
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            #[cfg(not(unix))]
+            {
+                eprintln!("Stop not supported on this platform. Kill pid {} manually.", pid);
+                return;
+            }
+            std::fs::remove_file(server_pid_path()).ok();
+            println!("Server stopped (pid {}).", pid);
+        }
+    }
 }
 
 fn cmd_server_status() {
-    eprintln!("Server status not yet implemented.");
-    std::process::exit(1);
+    match read_server_pid() {
+        None => println!("Server is not running."),
+        Some(pid) => {
+            if is_pid_running(pid) {
+                println!("Server is running (pid {}).", pid);
+            } else {
+                std::fs::remove_file(server_pid_path()).ok();
+                println!("Server is not running (stale pid removed).");
+            }
+        }
+    }
 }
 
 async fn cmd_server_run(
