@@ -56,6 +56,11 @@ enum Command {
         #[command(subcommand)]
         command: CronCommand,
     },
+    /// Manage webhook triggers
+    Webhook {
+        #[command(subcommand)]
+        command: WebhookCommand,
+    },
     /// List recent conversation threads
     Threads {
         /// Workspace name
@@ -252,6 +257,33 @@ enum CronCommand {
         #[arg(long)]
         workspace: Option<String>,
         id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum WebhookCommand {
+    /// Create a webhook trigger for an agent
+    Add {
+        /// Agent name
+        agent: String,
+        #[arg(long)]
+        workspace: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// List webhook triggers for an agent
+    Ls {
+        /// Agent name
+        agent: String,
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Delete a webhook trigger
+    Rm {
+        /// Webhook ID
+        id: String,
+        #[arg(long)]
+        workspace: Option<String>,
     },
 }
 
@@ -772,6 +804,25 @@ async fn main() {
                         std::process::exit(1);
                     }
                 }
+            }
+        },
+
+        Command::Webhook { command } => match command {
+            WebhookCommand::Add {
+                agent,
+                workspace,
+                description,
+            } => {
+                let workspace = resolve_workspace(workspace);
+                cmd_webhook_add(&workspace, &agent, description.as_deref()).await;
+            }
+            WebhookCommand::Ls { agent, workspace } => {
+                let workspace = resolve_workspace(workspace);
+                cmd_webhook_ls(&workspace, &agent).await;
+            }
+            WebhookCommand::Rm { id, workspace } => {
+                let workspace = resolve_workspace(workspace);
+                cmd_webhook_rm(&workspace, &id).await;
             }
         },
 
@@ -1366,6 +1417,55 @@ fn clear_status(is_tty: bool, lines: usize) {
     // Move cursor up and clear each line
     for _ in 0..lines {
         eprint!("\x1b[1A\x1b[2K");
+    }
+}
+
+async fn cmd_webhook_add(workspace: &str, agent: &str, description: Option<&str>) {
+    let cfg = config::CliConfig::load();
+    let client = make_client(&cfg);
+    match client.create_webhook(workspace, agent, description).await {
+        Ok(id) => {
+            let server_url = cfg.server_url();
+            println!("Webhook ID:  {}", id);
+            println!("Trigger URL: {}/trigger/{}", server_url, id);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn cmd_webhook_ls(workspace: &str, agent: &str) {
+    let cfg = config::CliConfig::load();
+    let client = make_client(&cfg);
+    match client.list_webhooks(workspace, agent).await {
+        Ok(hooks) if hooks.is_empty() => {
+            println!("No webhooks for agent \"{}\".", agent);
+        }
+        Ok(hooks) => {
+            for h in &hooks {
+                let id = h["id"].as_str().unwrap_or("?");
+                let desc = h["description"].as_str().unwrap_or("(no description)");
+                println!("{} - {}", id, desc);
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn cmd_webhook_rm(workspace: &str, id: &str) {
+    let cfg = config::CliConfig::load();
+    let client = make_client(&cfg);
+    match client.delete_webhook(workspace, id).await {
+        Ok(_) => println!("Webhook {} deleted.", id),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
     }
 }
 
