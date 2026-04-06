@@ -1938,6 +1938,139 @@ async fn list_threads_handler(
     }
 }
 
+// --- Handlers: Webhooks ---
+
+async fn create_webhook_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path((ws, agent_name)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if let Err(e) = require_workspace_member(&state, &caller, &ws) {
+        return e;
+    }
+    let description = body["description"].as_str();
+    let secret = body["secret"].as_str();
+    match state
+        .db
+        .create_webhook(&ws, &agent_name, description, secret, &caller.user.id)
+    {
+        Ok(id) => (StatusCode::OK, Json(serde_json::json!({"id": id}))).into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn list_webhooks_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path((ws, agent_name)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if let Err(e) = require_workspace_member(&state, &caller, &ws) {
+        return e;
+    }
+    match state.db.list_webhooks(&ws, &agent_name) {
+        Ok(hooks) => {
+            (StatusCode::OK, Json(serde_json::json!({"webhooks": hooks}))).into_response()
+        }
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn delete_webhook_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path((ws, webhook_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if let Err(e) = require_workspace_member(&state, &caller, &ws) {
+        return e;
+    }
+    match state.db.delete_webhook(&webhook_id, &ws) {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn trigger_webhook_handler(
+    State(state): State<SharedState>,
+    Path(webhook_id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> impl IntoResponse {
+    let webhook = match state.db.get_webhook(&webhook_id) {
+        Ok(Some(w)) if w.enabled => w,
+        Ok(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "webhook not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    // Verify HMAC if secret is configured
+    if let Some(secret) = &webhook.secret {
+        let sig = headers
+            .get("X-Hub-Signature-256")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if !verify_webhook_signature(secret, &body, sig) {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "invalid signature"})),
+            )
+                .into_response();
+        }
+    }
+
+    let thread_id = format!("thread-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+    let trigger_id = format!("webhook-{}", &webhook_id[..8.min(webhook_id.len())]);
+    let task = if body.trim().is_empty() {
+        "Webhook triggered.".to_string()
+    } else {
+        body
+    };
+
+    match state.db.send_inbox_message(
+        &webhook.workspace_name,
+        &thread_id,
+        &trigger_id,
+        &webhook.agent_name,
+        "request",
+        Some(&serde_json::json!(task)),
+    ) {
+        Ok(_) => {
+            state.inbox_notify.notify_waiters();
+            (StatusCode::OK, Json(serde_json::json!({"thread_id": thread_id}))).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+fn verify_webhook_signature(secret: &str, body: &str, sig_header: &str) -> bool {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let sig = sig_header
+        .strip_prefix("sha256=")
+        .unwrap_or(sig_header);
+    let Ok(expected) = hex::decode(sig) else {
+        return false;
+    };
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+    mac.update(body.as_bytes());
+    mac.verify_slice(&expected).is_ok()
+}
+
 // --- Helpers ---
 
 fn error_response(status: StatusCode, message: &str) -> axum::response::Response {
@@ -1948,7 +2081,9 @@ fn error_response(status: StatusCode, message: &str) -> axum::response::Response
 
 /// Build the Axum router with all routes. Extracted for use in tests.
 pub fn build_router(state: SharedState) -> Router {
-    let public = Router::new().route("/health", get(health_handler));
+    let public = Router::new()
+        .route("/health", get(health_handler))
+        .route("/trigger/{id}", post(trigger_webhook_handler));
 
     let protected = Router::new()
         .route(
@@ -2045,6 +2180,15 @@ pub fn build_router(state: SharedState) -> Router {
         .route(
             "/workspaces/{workspace_name}/cron/{cron_id}",
             delete(remove_cron_handler).put(update_cron_handler),
+        )
+        // Webhooks (workspace-scoped)
+        .route(
+            "/workspaces/{ws}/agents/{agent}/webhooks",
+            get(list_webhooks_handler).post(create_webhook_handler),
+        )
+        .route(
+            "/workspaces/{ws}/webhooks/{id}",
+            delete(delete_webhook_handler),
         )
         .layer(middleware::from_fn_with_state(
             state.clone(),

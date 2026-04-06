@@ -491,3 +491,127 @@ async fn test_cron_invalid_schedule() {
     assert!(result.is_err());
 }
 
+#[tokio::test]
+async fn test_webhook_crud() {
+    let (url, key, _tmp) = start_test_server().await;
+    let client = admin_client(&url, &key);
+
+    // Create an agent first
+    client
+        .register_agent(
+            "admin",
+            "agent1",
+            "",
+            "Do stuff.",
+            "local",
+            "auto",
+            "background",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let http = reqwest::Client::new();
+
+    // Create webhook
+    let resp = http
+        .post(&format!("{}/workspaces/admin/agents/agent1/webhooks", url))
+        .header("X-API-Key", &key)
+        .json(&serde_json::json!({"description": "my hook"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let webhook_id = body["id"].as_str().unwrap().to_string();
+    assert!(webhook_id.starts_with("wh-"));
+
+    // List webhooks
+    let resp = http
+        .get(&format!("{}/workspaces/admin/agents/agent1/webhooks", url))
+        .header("X-API-Key", &key)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["webhooks"].as_array().unwrap().len(), 1);
+    assert_eq!(body["webhooks"][0]["description"], "my hook");
+
+    // Delete webhook
+    let resp = http
+        .delete(&format!("{}/workspaces/admin/webhooks/{}", url, webhook_id))
+        .header("X-API-Key", &key)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Verify gone
+    let resp = http
+        .get(&format!("{}/workspaces/admin/agents/agent1/webhooks", url))
+        .header("X-API-Key", &key)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["webhooks"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn test_webhook_trigger() {
+    let (url, key, _tmp) = start_test_server().await;
+    let client = admin_client(&url, &key);
+
+    // Create an agent first
+    client
+        .register_agent(
+            "admin",
+            "agent1",
+            "",
+            "Do stuff.",
+            "local",
+            "auto",
+            "background",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let http = reqwest::Client::new();
+
+    // Create webhook
+    let resp = http
+        .post(&format!("{}/workspaces/admin/agents/agent1/webhooks", url))
+        .header("X-API-Key", &key)
+        .json(&serde_json::json!({"description": "test hook"}))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let webhook_id = body["id"].as_str().unwrap().to_string();
+
+    // Trigger webhook - NO auth header
+    let resp = http
+        .post(&format!("{}/trigger/{}", url, webhook_id))
+        .header("Content-Type", "text/plain")
+        .body("run the thing")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["thread_id"].as_str().unwrap().starts_with("thread-"));
+
+    // Trigger non-existent webhook returns 404
+    let resp = http
+        .post(&format!("{}/trigger/wh-doesnotexist", url))
+        .body("hello")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
