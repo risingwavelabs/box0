@@ -136,8 +136,6 @@ enum AgentCommand {
         description: String,
         #[arg(long)]
         instructions: String,
-        #[arg(long, default_value = "local")]
-        machine: String,
         /// Runtime: auto (default), claude, or codex
         #[arg(long, default_value = "auto")]
         runtime: String,
@@ -400,7 +398,6 @@ async fn main() {
                 name,
                 description,
                 instructions,
-                machine,
                 runtime,
                 webhook,
                 slack,
@@ -414,7 +411,7 @@ async fn main() {
                         &name,
                         &description,
                         &instructions,
-                        &machine,
+                        "local",
                         &runtime,
                         "background",
                         webhook.as_deref(),
@@ -423,8 +420,8 @@ async fn main() {
                     .await
                 {
                     Ok(a) => println!(
-                        "Agent \"{}\" registered in workspace \"{}\" on machine \"{}\" (runtime: {}).",
-                        a.name, workspace, a.machine_id, a.runtime
+                        "Agent \"{}\" registered in workspace \"{}\" (runtime: {}).",
+                        a.name, workspace, a.runtime
                     ),
                     Err(e) => {
                         eprintln!("Error: {}", e);
@@ -442,15 +439,14 @@ async fn main() {
                             println!("No agents in workspace \"{}\".", workspace);
                         } else {
                             println!(
-                                "{:<20} {:<30} {:<10} {:<10} {}",
-                                "NAME", "DESCRIPTION", "MACHINE", "STATUS", "CREATED"
+                                "{:<20} {:<30} {:<10} {}",
+                                "NAME", "DESCRIPTION", "STATUS", "CREATED"
                             );
                             for a in agents {
                                 println!(
-                                    "{:<20} {:<30} {:<10} {:<10} {}",
+                                    "{:<20} {:<30} {:<10} {}",
                                     a.name,
                                     a.description,
-                                    a.machine_id,
                                     a.status,
                                     a.created_at.format("%Y-%m-%d %H:%M:%S")
                                 );
@@ -471,7 +467,6 @@ async fn main() {
                     Ok(a) => {
                         println!("Name:          {}", a.name);
                         println!("Workspace:     {}", workspace);
-                        println!("Machine:       {}", a.machine_id);
                         println!("Status:        {}", a.status);
                         println!(
                             "Registered by: {}",
