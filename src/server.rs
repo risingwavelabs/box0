@@ -469,6 +469,7 @@ async fn register_agent_handler(
         req.webhook_url.as_deref(),
         req.slack_channel.as_deref(),
         req.webhook_secret.as_deref(),
+        false,
     ) {
         Ok(agent) => (
             StatusCode::CREATED,

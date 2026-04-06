@@ -76,6 +76,8 @@ pub struct Agent {
     pub slack_channel: Option<String>,
     #[serde(default)]
     pub webhook_secret: Option<String>,
+    #[serde(default)]
+    pub webhook_enabled: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -413,6 +415,10 @@ impl Database {
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN webhook_url TEXT", []);
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN slack_channel TEXT", []);
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN webhook_secret TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE agents ADD COLUMN webhook_enabled INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         let _ = conn.execute("ALTER TABLE cron_jobs ADD COLUMN end_date TEXT", []);
         // Migrate old temp column to kind
         let _ = conn.execute("UPDATE agents SET kind = 'temp' WHERE temp = 1", []);
@@ -883,7 +889,7 @@ impl Database {
     // --- Agents ---
 
     fn parse_agent_row(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
-        let ts: String = row.get(12)?;
+        let ts: String = row.get(13)?;
         Ok(Agent {
             name: row.get(0)?,
             description: row.get(1)?,
@@ -897,11 +903,12 @@ impl Database {
             webhook_url: row.get(9)?,
             slack_channel: row.get(10)?,
             webhook_secret: row.get(11)?,
+            webhook_enabled: row.get::<_, i64>(12)? != 0,
             created_at: Database::parse_ts(&ts),
         })
     }
 
-    const AGENT_COLS: &str = "name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, webhook_url, slack_channel, webhook_secret, created_at";
+    const AGENT_COLS: &str = "name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, webhook_url, slack_channel, webhook_secret, webhook_enabled, created_at";
 
     pub fn register_agent(
         &self,
@@ -916,11 +923,12 @@ impl Database {
         webhook_url: Option<&str>,
         slack_channel: Option<&str>,
         webhook_secret: Option<&str>,
+        webhook_enabled: bool,
     ) -> Result<Agent> {
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
-            "INSERT INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind, timeout, webhook_url, slack_channel, webhook_secret) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind, timeout, webhook_url, slack_channel, webhook_secret, webhook_enabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 workspace_name,
                 name,
@@ -934,6 +942,7 @@ impl Database {
                 webhook_url,
                 slack_channel,
                 webhook_secret,
+                webhook_enabled as i64,
             ],
         )?;
 
@@ -956,6 +965,7 @@ impl Database {
             webhook_url: webhook_url.map(|s| s.to_string()),
             slack_channel: slack_channel.map(|s| s.to_string()),
             webhook_secret: webhook_secret.map(|s| s.to_string()),
+            webhook_enabled,
             created_at: Self::parse_ts(&ts),
         })
     }
@@ -1090,12 +1100,12 @@ impl Database {
     ) -> Result<Vec<(String, Agent)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT workspace_name, name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, webhook_url, slack_channel, webhook_secret, created_at FROM agents WHERE machine_id = ?1 AND status = 'active'",
+            "SELECT workspace_name, name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, webhook_url, slack_channel, webhook_secret, webhook_enabled, created_at FROM agents WHERE machine_id = ?1 AND status = 'active'",
         )?;
         let agents = stmt
             .query_map(params![machine_id], |row| {
                 let workspace: String = row.get(0)?;
-                let ts: String = row.get(13)?;
+                let ts: String = row.get(14)?;
                 Ok((
                     workspace,
                     Agent {
@@ -1111,6 +1121,7 @@ impl Database {
                         webhook_url: row.get(10)?,
                         slack_channel: row.get(11)?,
                         webhook_secret: row.get(12)?,
+                        webhook_enabled: row.get::<_, i64>(13)? != 0,
                         created_at: Database::parse_ts(&ts),
                     },
                 ))
@@ -2262,6 +2273,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         )
         .unwrap();
 
@@ -2289,6 +2301,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         )
         .unwrap();
 
@@ -2334,6 +2347,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         )
         .unwrap();
 
@@ -2390,6 +2404,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         )
         .unwrap();
 
@@ -2530,6 +2545,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         )
         .unwrap();
 
