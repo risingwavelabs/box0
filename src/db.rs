@@ -1423,10 +1423,7 @@ impl Database {
                 secret: row.get(4)?,
                 enabled: row.get::<_, i64>(5)? != 0,
                 created_by: row.get(6)?,
-                created_at: row
-                    .get::<_, String>(7)?
-                    .parse()
-                    .unwrap_or_else(|_| Utc::now()),
+                created_at: Database::parse_ts(&row.get::<_, String>(7)?),
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
@@ -1447,10 +1444,7 @@ impl Database {
                 secret: row.get(4)?,
                 enabled: row.get::<_, i64>(5)? != 0,
                 created_by: row.get(6)?,
-                created_at: row
-                    .get::<_, String>(7)?
-                    .parse()
-                    .unwrap_or_else(|_| Utc::now()),
+                created_at: Database::parse_ts(&row.get::<_, String>(7)?),
             })
         })
         .optional()
