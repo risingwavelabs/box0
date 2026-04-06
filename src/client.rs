@@ -26,11 +26,6 @@ struct InboxResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct MachineInboxResponse {
-    messages: Vec<crate::db::MachineInboxMessage>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct InviteResponse {
     pub key: String,
     pub user_id: String,
@@ -259,73 +254,6 @@ impl BhClient {
         ));
         self.request(req).await?;
         Ok(())
-    }
-
-    // --- Machines (global) ---
-
-    pub async fn register_machine(&self, id: &str) -> Result<crate::db::Machine> {
-        let req = self
-            .client
-            .post(format!("{}/machines", self.base_url))
-            .json(&serde_json::json!({"id": id}));
-        let resp = self.request(req).await?;
-        Ok(resp.json().await?)
-    }
-
-    pub async fn list_machines(&self) -> Result<Vec<crate::db::Machine>> {
-        let req = self.client.get(format!("{}/machines", self.base_url));
-        let resp = self.request(req).await?;
-        let body: serde_json::Value = resp.json().await?;
-        Ok(serde_json::from_value(body["machines"].clone()).unwrap_or_default())
-    }
-
-    /// Get all active agents on a machine across all workspaces (for daemon use).
-    pub async fn machine_agents(
-        &self,
-        machine_id: &str,
-    ) -> Result<Vec<(String, crate::db::Agent)>> {
-        let req = self
-            .client
-            .get(format!("{}/machines/{}/agents", self.base_url, machine_id));
-        let resp = self.request(req).await?;
-        let body: serde_json::Value = resp.json().await?;
-        let items = body["agents"].as_array().cloned().unwrap_or_default();
-        let mut result = vec![];
-        for item in items {
-            let workspace = item["workspace"].as_str().unwrap_or("").to_string();
-            if let Ok(a) = serde_json::from_value::<crate::db::Agent>(item.clone()) {
-                result.push((workspace, a));
-            }
-        }
-        Ok(result)
-    }
-
-    pub async fn heartbeat_machine(&self, id: &str) -> Result<()> {
-        let req = self
-            .client
-            .post(format!("{}/machines/{}/heartbeat", self.base_url, id));
-        self.request(req).await?;
-        Ok(())
-    }
-
-    /// Long-poll for unread messages across all agents on this machine.
-    /// Server holds the connection up to `timeout` seconds.
-    pub async fn poll_machine(
-        &self,
-        machine_id: &str,
-        timeout: f64,
-    ) -> Result<Vec<crate::db::MachineInboxMessage>> {
-        let url = format!(
-            "{}/machines/{}/poll?timeout={}",
-            self.base_url, machine_id, timeout
-        );
-        let req = self
-            .client
-            .get(&url)
-            .timeout(std::time::Duration::from_secs_f64(timeout + 5.0));
-        let resp = self.request(req).await?;
-        let body: MachineInboxResponse = resp.json().await?;
-        Ok(body.messages)
     }
 
     // --- Workspaces ---

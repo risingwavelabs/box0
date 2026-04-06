@@ -1,5 +1,5 @@
 use box0::{
-    client, config, daemon,
+    client, config,
     db::{AdminEnsureStatus, Database},
     server,
 };
@@ -40,11 +40,6 @@ enum Command {
     Agent {
         #[command(subcommand)]
         command: AgentCommand,
-    },
-    /// Manage machines
-    Machine {
-        #[command(subcommand)]
-        command: MachineCommand,
     },
     /// Manage workspaces
     Workspace {
@@ -189,18 +184,6 @@ enum AgentCommand {
         workspace: Option<String>,
         name: String,
     },
-}
-
-#[derive(Subcommand)]
-enum MachineCommand {
-    Join {
-        server_url: Option<String>,
-        #[arg(long)]
-        name: Option<String>,
-        #[arg(long)]
-        key: Option<String>,
-    },
-    Ls,
 }
 
 #[derive(Subcommand)]
@@ -589,52 +572,6 @@ async fn main() {
                                     msg.to_id,
                                     content
                                 );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Error: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-            }
-        },
-
-        Command::Machine { command } => match command {
-            MachineCommand::Join {
-                server_url,
-                name,
-                key,
-            } => {
-                let cfg = config::CliConfig::load();
-                let url = match server_url {
-                    Some(u) => u,
-                    None => {
-                        require_config(&cfg);
-                        cfg.server_url()
-                    }
-                };
-                let api_key = key.or_else(|| cfg.api_key.clone());
-                cmd_machine_join(&url, name.as_deref(), api_key.as_deref()).await;
-            }
-            MachineCommand::Ls => {
-                let cfg = config::CliConfig::load();
-                let client = make_client(&cfg);
-                match client.list_machines().await {
-                    Ok(machines) => {
-                        if machines.is_empty() {
-                            println!("No machines.");
-                        } else {
-                            println!(
-                                "{:<20} {:<15} {:<10} {}",
-                                "NAME", "OWNER", "STATUS", "LAST HEARTBEAT"
-                            );
-                            for m in machines {
-                                let hb = m
-                                    .last_heartbeat
-                                    .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
-                                    .unwrap_or_else(|| "never".to_string());
-                                println!("{:<20} {:<15} {:<10} {}", m.id, m.owner, m.status, hb);
                             }
                         }
                     }
@@ -1395,40 +1332,6 @@ async fn cmd_wait(wait_all: bool, timeout: Option<f64>, json_output: bool) {
             break;
         }
 
-        // Check for offline machines if any task has been queued > 30s
-        let mut warned_machines: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for info in pending.threads.values() {
-            let state = status.get(info.agent.as_str()).copied().unwrap_or("queued");
-            if state != "queued" { continue; }
-            let queued_secs = if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&info.created_at) {
-                (chrono::Utc::now() - created.with_timezone(&chrono::Utc)).num_seconds()
-            } else { 0 };
-            if queued_secs > 30 {
-                // Look up agent's machine and check heartbeat
-                if let Ok(agent) = client.get_agent(&info.workspace, &info.agent).await {
-                    if !warned_machines.contains(&agent.machine_id) {
-                        if let Ok(machines) = client.list_machines().await {
-                            if let Some(machine) = machines.iter().find(|m| m.id == agent.machine_id) {
-                                let offline = machine.last_heartbeat.map(|hb| {
-                                    (chrono::Utc::now() - hb).num_seconds() > 60
-                                }).unwrap_or(true);
-                                if offline {
-                                    let ago = machine.last_heartbeat.map(|hb| {
-                                        format!("{}s ago", (chrono::Utc::now() - hb).num_seconds())
-                                    }).unwrap_or_else(|| "never".to_string());
-                                    clear_status(is_tty, status_lines_printed);
-                                    status_lines_printed = 0;
-                                    eprintln!("Warning: machine \"{}\" is offline (last heartbeat: {}).", agent.machine_id, ago);
-                                    eprintln!("Agent \"{}\" cannot execute until the daemon is restarted on that machine.\n", info.agent);
-                                    warned_machines.insert(agent.machine_id.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Refresh elapsed times in status display
         if !pending.threads.is_empty() && is_tty {
             clear_status(is_tty, status_lines_printed);
@@ -1526,19 +1429,6 @@ async fn cmd_reply(workspace: &str, thread_id: &str, message: &str) {
             std::process::exit(1);
         }
     }
-}
-
-async fn cmd_machine_join(server_url: &str, name: Option<&str>, api_key: Option<&str>) {
-    let machine_id = name
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("machine-{}", &uuid::Uuid::new_v4().to_string()[..8]));
-
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
-        .init();
-
-    println!("Joining as machine \"{}\" -> {}", machine_id, server_url);
-    daemon::run_remote(server_url, &machine_id, api_key).await;
 }
 
 async fn cmd_skill_install_claude_code() {

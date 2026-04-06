@@ -96,11 +96,6 @@ struct UpdateAgentRequest {
 }
 
 #[derive(Deserialize)]
-struct RegisterMachineRequest {
-    id: String,
-}
-
-#[derive(Deserialize)]
 struct CreateWorkspaceRequest {
     name: String,
 }
@@ -449,7 +444,7 @@ async fn register_agent_handler(
         Ok(None) if req.machine_id == "local" => {
             return error_response(
                 StatusCode::BAD_REQUEST,
-                "no local machine available. This server was started with --no-local. Register a machine first: b0 machine join <server-url> --name <name> --key <key>",
+                "no local machine available. This server was started with --no-local.",
             );
         }
         Ok(None) => {
@@ -642,44 +637,6 @@ async fn agent_logs_handler(
             Json(serde_json::json!({"messages": messages})),
         )
             .into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
-}
-
-// --- Handlers: Machines ---
-
-async fn register_machine_handler(
-    State(state): State<SharedState>,
-    Extension(caller): Extension<Caller>,
-    Json(req): Json<RegisterMachineRequest>,
-) -> impl IntoResponse {
-    match state.db.register_machine(&req.id, &caller.user.id) {
-        Ok(machine) => (
-            StatusCode::CREATED,
-            Json(serde_json::to_value(machine).unwrap()),
-        )
-            .into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
-}
-
-async fn list_machines_handler(State(state): State<SharedState>) -> impl IntoResponse {
-    match state.db.list_machines() {
-        Ok(machines) => (
-            StatusCode::OK,
-            Json(serde_json::json!({"machines": machines})),
-        )
-            .into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
-}
-
-async fn heartbeat_machine_handler(
-    State(state): State<SharedState>,
-    Path(machine_id): Path<String>,
-) -> impl IntoResponse {
-    match state.db.heartbeat_machine(&machine_id) {
-        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "ok"}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
@@ -882,70 +839,6 @@ async fn update_cron_handler(
         Json(serde_json::json!({"status": "updated"})),
     )
         .into_response()
-}
-
-/// Returns all active agents on a machine across all workspaces. Used by remote daemons.
-async fn machine_agents_handler(
-    State(state): State<SharedState>,
-    Path(machine_id): Path<String>,
-) -> impl IntoResponse {
-    match state.db.get_all_active_agents_for_machine(&machine_id) {
-        Ok(agents) => {
-            let items: Vec<serde_json::Value> = agents
-                .into_iter()
-                .map(|(workspace, a)| {
-                    let mut v = serde_json::to_value(&a).unwrap();
-                    v["workspace"] = serde_json::Value::String(workspace);
-                    v
-                })
-                .collect();
-            (StatusCode::OK, Json(serde_json::json!({"agents": items}))).into_response()
-        }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
-}
-
-#[derive(Deserialize)]
-struct MachinePollQuery {
-    #[serde(default)]
-    timeout: Option<f64>,
-}
-
-/// Long-poll endpoint for remote daemons. Returns all unread request/answer
-/// messages for agents on this machine. Holds the connection up to `timeout`
-/// seconds (max 30) waiting for messages to arrive.
-async fn machine_poll_handler(
-    State(state): State<SharedState>,
-    Path(machine_id): Path<String>,
-    Query(params): Query<MachinePollQuery>,
-) -> impl IntoResponse {
-    let timeout = params.timeout.unwrap_or(0.0).clamp(0.0, 30.0);
-    let start = std::time::Instant::now();
-
-    loop {
-        match state.db.get_unread_messages_for_machine(&machine_id) {
-            Ok(messages) if !messages.is_empty() || timeout <= 0.0 => {
-                return (
-                    StatusCode::OK,
-                    Json(serde_json::json!({"messages": messages})),
-                )
-                    .into_response();
-            }
-            Ok(_) => {}
-            Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-        }
-
-        let remaining = timeout - start.elapsed().as_secs_f64();
-        if remaining <= 0.0 {
-            let empty: Vec<crate::db::MachineInboxMessage> = vec![];
-            return (StatusCode::OK, Json(serde_json::json!({"messages": empty}))).into_response();
-        }
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs_f64(remaining),
-            state.inbox_notify.notified(),
-        )
-        .await;
-    }
 }
 
 async fn list_users_handler(
@@ -2108,16 +2001,6 @@ pub fn build_router(state: SharedState) -> Router {
             "/workspaces/{workspace_name}/agents/{name}/logs",
             get(agent_logs_handler),
         )
-        .route(
-            "/machines",
-            get(list_machines_handler).post(register_machine_handler),
-        )
-        .route(
-            "/machines/{machine_id}/heartbeat",
-            post(heartbeat_machine_handler),
-        )
-        .route("/machines/{machine_id}/agents", get(machine_agents_handler))
-        .route("/machines/{machine_id}/poll", get(machine_poll_handler))
         .route("/users", get(list_users_handler))
         .route("/users/invite", post(invite_user_handler))
         .route(

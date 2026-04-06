@@ -407,25 +407,6 @@ async fn test_started_message_flow() {
 }
 
 #[tokio::test]
-async fn test_machines() {
-    let (url, key, _tmp) = start_test_server().await;
-    let client = admin_client(&url, &key);
-
-    // Local machine exists from bootstrap
-    let machines = client.list_machines().await.unwrap();
-    assert_eq!(machines.len(), 1);
-    assert_eq!(machines[0].id, "local");
-
-    // Register another machine
-    client.register_machine("gpu-box").await.unwrap();
-    let machines = client.list_machines().await.unwrap();
-    assert_eq!(machines.len(), 2);
-
-    // Heartbeat
-    client.heartbeat_machine("gpu-box").await.unwrap();
-}
-
-#[tokio::test]
 async fn test_cron_crud() {
     let (url, key, _tmp) = start_test_server().await;
     let client = admin_client(&url, &key);
